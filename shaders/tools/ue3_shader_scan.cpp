@@ -138,8 +138,10 @@ int main(int argc, char** argv) {
     // Seen in Mass Effect's summaries with CompressionFlags = 2 (LZO). Chunks are found by
     // that header pattern (the chunk table offsets vary with the summary's name/generation
     // tables).
-    for (size_t off = 4; off + 16 <= d.size(); ++off) {
-      if (BE(&d[off]) != 0x9E2A83C1u || BE(&d[off + 4]) != 0x9E2A83C1u) continue;
+    // mk9-nx: Mortal Kombat Komplete Edition writes the block size (0x20000) in place of the second tag, also LZO
+    // (13 fully compressed packages such as Engine.xxx start with such a chunk at offset 0).
+    for (size_t off = 0; off + 16 <= d.size(); ++off) {
+      if (BE(&d[off]) != 0x9E2A83C1u || (BE(&d[off + 4]) != 0x9E2A83C1u && BE(&d[off + 4]) != 0x20000u)) continue;
       const uint32_t csize = BE(&d[off + 8]), usize = BE(&d[off + 12]);
       if (usize == 0 || usize > 0x4000000 || csize == 0 || csize > d.size()) continue;
       const size_t nblocks = (usize + 0x1FFFF) / 0x20000;

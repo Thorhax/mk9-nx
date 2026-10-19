@@ -138,3 +138,31 @@ PS, 22 MB; USF4 had 865). UE3 compiles one pixel shader per material and light/f
 stage or with other characters will add more: the package needs the containers from the game files too (UE3 keeps
 them in the shader caches inside the `.xxx` packages: `RefShaderCache`/`LocalShaderCache` objects), the counterpart
 of usf4-nx's `tools/extract_game_shaders.py`.
+
+### First native runs (2026-10-20, GTX 960M, 170 s scripted to a fight)
+
+1. Package from the runtime dump only (4,998 shaders): no crash; menus, character select and the ladder drawn right,
+   logo backgrounds white, 3D scenes mostly missing. `[native]` counters: 169 shader objects seen, 48 identified;
+   ~84k "immediate" loads (Direct3D's own shaders) and 75 VS / 34 PS objects "not in the library": Direct3D rewrites
+   a container when it binds it (vertex declaration patching), so the bound object's container differs from the one
+   the parse helper saw.
+2. Round 1 (usf4-nx's loop): `sa2_shader_misses = misses` keeps the rewritten containers (`missing/`, 83) and the raw
+   ring microcode (`discovery/`, 61); `tools/wrap_discovered.py` wrapped 2 (Direct3D's own, no container anywhere) and
+   skipped 59 that a real container (mostly in `missing/`) has. With those in the package: immediate loads 0, 103
+   addresses / 75 codes mapped, and **the whole flow draws**: logos, menus, VS screen, the opponent's intro, the
+   fight with HUD (Scorpion vs Nightwolf, "2 HITS 7% Damage"). 22-28 fps in the fight on this laptop GPU (emulated:
+   13-19).
+
+### Shaders from the game files
+
+`shaders/tools/ue3_shader_scan` (masseffect-nx's UE3 package scanner) reads MK9's packages after one change: MK9's
+compressed chunks start with the tag and the block size (`9E2A83C1 00020000 csize usize`, then (compressed,
+uncompressed) per 128 KB block) where Mass Effect wrote the tag twice; the blocks are LZO1X as in Mass Effect. The 13
+fully compressed packages (Engine.xxx, ...) begin with such a chunk at offset 0; the other 1,171 have a plain summary
+(file version 472, licensee 46) and compressed chunks after it.
+
+All 1,184 packages in 59 s: 6,381 chunks, **0 bad blocks**, 73,170 containers, **21,093 distinct** (1,352 VS, 19,741
+PS) covering 19,829 distinct microcodes; **every one of the 4,531 microcodes of the runtime dump is among them**. So
+the shader package can be made from the game files alone, as usf4-nx's browser installer does for USF4. What the
+scan cannot have are the containers Direct3D rewrites at bind time (40 of the 83 `missing/` ones are in the scan by
+microcode): those still come from `sa2_shader_misses` runs (or repairs of the variants).

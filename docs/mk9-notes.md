@@ -80,7 +80,10 @@ CRT code as USF4's:
 | draw-time shader load | `sub_82BFEEE8` | the only Direct3D writer of `IM_LOAD` (`0xC0012700` at `0x82BFEF4C`, `0xC0012701` at `0x82BFF65C`/`0x82BFF6E4`); reads the bound **VS at device+12944 (`0x3290`), PS at device+12940 (`0x328C`)** (`lwz r30,12944(r31)` / `lwz r29,12940(r31)` at `0x82BFEF34`), then the VS object's +896 and +872: the same layout as USF4's (13072/13068 there) |
 | Draw (auto index), candidates | `sub_82BEFEF8`, `sub_82BF09E0`, `sub_82BF1270` | each builds predicated `DRAW_INDX` with one data word (`0xC0012201`) at two sites. Which is DrawVertices / DrawVerticesUP: to check (USF4: the UP one calls the inline-data allocator) |
 | Draw (indexed), candidates | `sub_82BF0400`, `sub_82BF0DF8`, `sub_82BF1710` | predicated `DRAW_INDX` with three data words (`0xC0032201`), two sites each; `sub_82BF5F90` has one more (with an `IM_LOAD_IMMEDIATE`, `0xC0192B00`: a Direct3D-internal draw, e.g. a clear or resolve) |
-| common Draw* flush | | all six draw candidates call the same sequence: `sub_82BFDD28` (8 times), `sub_82BFE0C0` (twice), the shader load `sub_82BFEEE8`, `sub_82BFDF68`, `sub_82BFDDE8`, `sub_82BFD990`, `sub_82BFCD60`, `sub_82BFBE80` (`sub_82BF0400` also `sub_82BFBB78` twice). Direct call sites: `sub_82BEFEF8` 2, `sub_82BF09E0` 2, `sub_82BF1270` 0 (reached by pointer), `sub_82BF0400` 1, `sub_82BF0DF8` 8, `sub_82BF1710` 1. Stage 4 hooks all six with `NoteDrawCall` |
+| common Draw* flush | | all six draw candidates call the same sequence: `sub_82BFDD28` (8 times), `sub_82BFE0C0` (twice), the shader load `sub_82BFEEE8`, `sub_82BFDF68`, `sub_82BFDDE8`, `sub_82BFD990`, `sub_82BFCD60`, `sub_82BFBE80` (`sub_82BF0400` also `sub_82BFBB78` twice). Direct call sites: `sub_82BEFEF8` 2, `sub_82BF09E0` 2, `sub_82BF1270` 0 (reached by pointer), `sub_82BF0400` 1, `sub_82BF0DF8` 8, `sub_82BF1710` 1. All six take the device in r3; `app/src/me/mk9_me_hooks.cpp` hooks all six with `NoteDrawCall` |
+| shader container parse helper | `sub_82BE9B48` | 20 instructions, r3 = container, fills r4's descriptor {blob, microcode, size} (usf4-nx's `sub_821E5930`). Diagnostic run (out/diag, every function in `0x82BE0000`-`0x82C40000` checked for a `0x102A110x` container in r3-r5, 130 s to a fight): ~4,500 calls with a container (378 VS, 4,123 PS so far), nearly all distinct. Its callers `sub_826C07C0` / `sub_826C0978` are UE3's shader creation, with Direct3D's CreateVertexShader/CreatePixelShader **inlined** (`sub_82BEB838` / `sub_82BEB610` take VS / PS containers in r3 but ran once each: Direct3D's own startup shaders). Hooked for the shader dump (`mk9_dump_shaders`) |
+| per-draw shader patching | `sub_82BFEC60`, `sub_82BFCD60` | r4 = container on every draw (484,501 calls in 130 s): Direct3D-internal, not hooked |
+| Direct3D device | `0x40012980` | r3 of the shader load in a run (logged once by `mk9_me_hooks.cpp`); command-buffer pointer at device+48 as in usf4-nx (`lwz r3,48(r31)` at `0x82BFEF80`) |
 | pixel-shader container checks | `sub_82BED4D0`, `sub_82C0B7E8`, `sub_82C13B48`, `sub_82C36AF0`, `sub_82CA06D8`, `sub_831AEE20`, `sub_8324BE50` | build the pixel container magic `0x102A1100`; CreatePixelShader is among them (USF4: 60-instruction function, r3 = container) |
 | `D3DDevice_Swap` | `sub_82BF6D58` | the only caller of `VdSwap` (import thunk `0x83376194`); called from `sub_82BF73E0`, `sub_826B57F8`, `sub_82BF1D18`, `sub_82C0A640`. Hooked by `app/src/mk9_frame_counter.cpp` for the `[fps]` line |
 
@@ -124,3 +127,14 @@ machine; the native renderer (stage 4) replaces it.
 
 Not verified yet: saving (no save prompt in 170 s and nothing written to `~/.local/share/mk9/<xuid>/`), the
 story-mode movies, other modes, a full match to its end.
+
+## Native renderer (stage 4)
+
+`app/src/me/mk9_me_hooks.cpp` (2026-10-20): usf4-nx's hook file with MK9's addresses (table above): device shader
+offsets 12944/12940, the shader load, the six draws, and the shader dump on the container parse helper.
+
+Shader dump (`mk9_dump_shaders = true`, 200 s through boot, menus and a fight): **5,075 containers** (330 VS, 4,745
+PS, 22 MB; USF4 had 865). UE3 compiles one pixel shader per material and light/fog permutation, so a fight on another
+stage or with other characters will add more: the package needs the containers from the game files too (UE3 keeps
+them in the shader caches inside the `.xxx` packages: `RefShaderCache`/`LocalShaderCache` objects), the counterpart
+of usf4-nx's `tools/extract_game_shaders.py`.

@@ -47,7 +47,7 @@ set(MK9_SOURCES
     src/sa2_capture.cpp
     # Stage 4: the native renderer (src/me, sa2-nx's copy of masseffect-nx's PM4-ring Vulkan renderer as adapted by
     # banjo-nx and tuned in usf4-nx; files kept as there so fixes can be taken over). It replaces the emulated Xenos GPU
-    # with sa2_renderer_native = true. MK9's Direct3D hooks (shader load, Draw*, swap) are still to be found
+    # with sa2_renderer_native = true. MK9's own Direct3D hooks are in src/me/mk9_me_hooks.cpp
     # (docs/mk9-notes.md); usf4-nx's are at USF4 addresses and are not built here.
     src/me/me_native_system.cpp
     src/me/me_ring_wait.cpp
@@ -59,6 +59,8 @@ set(MK9_SOURCES
     src/me/native/sa2_native_textures_pool.cpp
     src/me/native/sa2_shader_library.cpp
     src/me/native/sa2_native_glue.cpp
+    # MK9's Direct3D addresses (shader load, Draw*, shader container parse) and the shader dump (mk9_dump_shaders).
+    src/me/mk9_me_hooks.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
     src/me/mk9_api_stubs.cpp
     # Render resolution per console mode (docked / handheld) and MSAA: sa2_render_height_*, sa2_msaa.

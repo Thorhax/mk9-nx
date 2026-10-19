@@ -94,3 +94,33 @@ CRT code as USF4's:
   instead of predicated tiling), `usf4_gpu_wait.cpp`, `usf4_job_wait.cpp`, `usf4_job_pop_yield.cpp`,
   `usf4_native_copy.cpp`. Each needs MK9's own function found first (stage 4/5).
 - `app/mk9_switch_defaults.toml` keeps only usf4-nx's game-independent renderer settings.
+
+## First boots on the PC (stage 3, emulated GPU)
+
+Linux, hidden Xvfb display, `tools/linux/boot_test.sh`, 2026-10-20. **No code fixes were needed after stage 2**:
+
+1. 60 s, Intel HD 530: no crash. Autosave notice, `WBIntroLogo.wmv` (the XDK's own WMV decoder, as in USF4),
+   middleware logos (Beast, Dolby Digital, Turtle, PhysX, Unreal, Agora Games), title screen with PRESS START.
+   [fps] 33-46 in boot and title.
+2. Scripted gamepad (`mk9_input_script`), GTX 960M (`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json`),
+   170 s: `32 START;38 A;44 A;52 A;58 A;64 A;70 A;76 A;84 A` goes title -> main menu ("1 PLAYER": Fight, Story Mode,
+   Challenge Tower, Training, Xbox LIVE, Extras, Options) -> Fight -> Ladder -> character select (Scorpion, 32
+   portraits) -> difficulty (Medium) -> the ladder tower -> VS screen (Scorpion vs Freddy Krueger: the Komplete
+   Edition's DLC fighters are on the disc) -> the stage intro -> **a fight with HUD** (health bars, super meters), no
+   crash.
+
+Seen in the log, harmless so far: `UPDATE:` paths fail (no title update; the game falls back to the disc);
+`D:\Config\Xe-MK9Engine.ini` not found (UE3 looks for a per-platform override first, then uses `Coalesced.ini`);
+`KeSaveFloatingPointState` / `KeRestoreFloatingPointState` stubs called ~40 times a second by one thread (to check:
+the SDK stub returns success without saving anything; the PPC FPSCR is per thread in the recompiled code anyway);
+`XamVoiceSetMicArrayIdleUsers` stub.
+
+Audio: `[audio] SDL in 10 s: 1876 frames with data and 0 of silence` throughout; XMA contexts decoded on the calling
+thread (FMOD's XMA streams).
+
+Frame rate (emulated GPU, RelWithDebInfo, classic codegen): GTX 960M 25-30 fps in menus, **13-19 fps in the fight**
+(USF4: 30 at the same stage); Intel HD 530 ~40 fps on the title. As with USF4 the emulated GPU is the limit on this
+machine; the native renderer (stage 4) replaces it.
+
+Not verified yet: saving (no save prompt in 170 s and nothing written to `~/.local/share/mk9/<xuid>/`), the
+story-mode movies, other modes, a full match to its end.

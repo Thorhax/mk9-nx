@@ -1,0 +1,2 @@
+# classic codegen: no extra options (tools/codegen.sh --flavor classic writes this file; --flavor optimised
+# copies perf_overrides.toml here).

@@ -1,0 +1,66 @@
+#version 450
+
+// Color->depth EDRAM import, stencil part for the copy engine (see me_edram_stencil_to_buffer.comp): the
+// stencil byte of each 1x destination pixel is the low byte of the source color word, packed exactly as
+// me_edram_color_to_depth.frag does (40-column swap between color and depth tiles). Keep in sync.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(std430, set = 0, binding = 1) writeonly buffer Output { uint words[]; };
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_msaa_x, source_msaa_y;
+  uint rect_x, rect_y, rect_w, rect_h;
+  uint source_format;  // color class: 0 RGBA8, 2 UNORM10, 3 7e3
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+uint A7e3(float value) {
+  uint bits = floatBitsToUint(clamp(value, 0.0, 31.875));
+  uint denormal = ((bits & 0x7FFFFFu) | 0x800000u) >> min(125u - (bits >> 23u), 24u);
+  uint normal = bits - (124u << 23u);
+  uint biased = bits < 0x3E800000u ? denormal : normal;
+  return ((biased + 0x7FFFu + ((biased >> 16u) & 1u)) >> 16u) & 0x3FFu;
+}
+
+uint Pack(vec4 value) {
+  if (c.source_format == 0u) {
+    uvec4 n = uvec4(roundEven(clamp(value, 0.0, 1.0) * 255.0));
+    return n.r | (n.g << 8u) | (n.b << 16u) | (n.a << 24u);
+  }
+  if (c.source_format == 2u) {
+    uvec4 n = uvec4(roundEven(clamp(value, 0.0, 1.0) * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+    return n.r | (n.g << 10u) | (n.b << 20u) | (n.a << 30u);
+  }
+  return A7e3(value.r) | (A7e3(value.g) << 10u) | (A7e3(value.b) << 20u) |
+         (uint(roundEven(clamp(value.a, 0.0, 1.0) * 3.0)) << 30u);
+}
+
+uint Stencil(uvec2 pixel) {
+  uint tile = (pixel.y / c.tile_height) * c.pitch_tiles_target + pixel.x / c.tile_width;
+  if (tile < c.tile_target_start || tile - c.tile_target_start >= c.tiles_count) return 0u;
+  uint source_tile = c.tile_source_start + tile - c.tile_target_start;
+  uint word_x = pixel.x % c.tile_width;
+  word_x = word_x < (c.tile_width >> 1u) ? word_x + (c.tile_width >> 1u) : word_x - (c.tile_width >> 1u);
+  uvec2 source_pixel = uvec2((source_tile % c.pitch_tiles_source) * c.tile_width + word_x,
+                            (source_tile / c.pitch_tiles_source) * c.tile_height + pixel.y % c.tile_height) >>
+                       uvec2(c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(source_pixel, c.source_size))) return 0u;
+  return Pack(texelFetch(source, ivec2(source_pixel), 0)) & 255u;
+}
+
+void main() {
+  uvec2 id = gl_GlobalInvocationID.xy;
+  uint words_per_row = c.rect_w / 4u;
+  if (id.x >= words_per_row || id.y >= c.rect_h) return;
+  uvec2 pixel = uvec2(c.rect_x + id.x * 4u, c.rect_y + id.y);
+  words[id.y * words_per_row + id.x] = Stencil(pixel) | (Stencil(pixel + uvec2(1u, 0u)) << 8u) |
+      (Stencil(pixel + uvec2(2u, 0u)) << 16u) | (Stencil(pixel + uvec2(3u, 0u)) << 24u);
+}

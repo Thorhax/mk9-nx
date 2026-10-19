@@ -1,0 +1,19 @@
+#version 450
+// Xenos convert-resolve exponent bias applies to all four components, before
+// destination packing. One invocation owns one texel; source EDRAM is unchanged.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D source_image;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D destination_image;
+layout(push_constant) uniform Resolve {
+    ivec2 source_offset;
+    ivec2 destination_offset;
+    uvec2 extent;
+    int exponent_bias;
+} resolve;
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, resolve.extent))) return;
+    vec4 color = imageLoad(source_image, resolve.source_offset + ivec2(pixel));
+    imageStore(destination_image, resolve.destination_offset + ivec2(pixel),
+               color * exp2(float(resolve.exponent_bias)));
+}

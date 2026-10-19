@@ -1,0 +1,84 @@
+#version 450
+
+// Raw 8:8:8:8 EDRAM words reinterpreted as a packed 32-bit render target or
+// as a true 64-bit FP16 target.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D source;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D target;
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uvec2 target_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_format;
+  uint target_format;
+  uint source_64bpp;
+  uint target_64bpp;
+  uint source_msaa_x, source_msaa_y;
+  uint target_msaa_x, target_msaa_y;
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+float From7e3(uint f10) {
+  f10 &= 0x3FFu;
+  if (f10 == 0u) return 0.0;
+  uint mantissa = f10 & 0x7Fu;
+  uint exponent = f10 >> 7u;
+  if (exponent == 0u) {
+    uint displacement = 7u - uint(findMSB(mantissa));
+    exponent = 1u - displacement;
+    mantissa = (mantissa << displacement) & 0x7Fu;
+  }
+  return uintBitsToFloat(((exponent + 124u) << 23u) | (mantissa << 16u));
+}
+
+vec4 Unpack32(uint word) {
+  if (c.target_format == 2u) {
+    return vec4(float(word & 0x3FFu), float((word >> 10u) & 0x3FFu),
+                float((word >> 20u) & 0x3FFu), float(word >> 30u)) /
+           vec4(1023.0, 1023.0, 1023.0, 3.0);
+  }
+  return vec4(From7e3(word), From7e3(word >> 10u), From7e3(word >> 20u),
+              float(word >> 30u) * (1.0 / 3.0));
+}
+
+uint ReadWord(uint tile, uint word_local) {
+  uvec2 p = uvec2((tile % c.pitch_tiles_source) * c.tile_width + word_local,
+                  (tile / c.pitch_tiles_source) * c.tile_height + gl_GlobalInvocationID.y % c.tile_height) >> uvec2(c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(p, c.source_size))) return 0u;
+  uvec4 bytes = uvec4(round(imageLoad(source, ivec2(p)) * 255.0));
+  return bytes.r | (bytes.g << 8u) | (bytes.b << 16u) | (bytes.a << 24u);
+}
+
+void main() {
+  uvec2 q = gl_GlobalInvocationID.xy;
+  // Single writer per collapsed host texel. Physical samples are replicated on read.
+  if ((q.x & ((1u << (c.target_64bpp + c.target_msaa_x)) - 1u)) != 0u ||
+      (q.y & ((1u << c.target_msaa_y) - 1u)) != 0u) return;
+  bool range = c.tiles_count != 0u;
+  if (range && (q.y >= c.tile_height || q.x >= c.tiles_count * c.tile_width)) return;
+  uint relative = q.x / c.tile_width;
+  uint word_local = q.x % c.tile_width;
+  uint tile_target = range ? c.tile_target_start + relative
+                            : (q.y / c.tile_height) * c.pitch_tiles_target + relative;
+  uint tile_source = range ? c.tile_source_start + relative : tile_target;
+  uint tile_width_target = c.tile_width >> c.target_64bpp;
+  uvec2 p = uvec2((tile_target % c.pitch_tiles_target) * tile_width_target +
+                      (word_local >> c.target_64bpp),
+                  (tile_target / c.pitch_tiles_target) * c.tile_height + q.y % c.tile_height) >> uvec2(c.target_msaa_x, c.target_msaa_y);
+  if (any(greaterThanEqual(p, c.target_size))) return;
+  if (c.target_64bpp != 0u) {
+    if ((word_local & 1u) != 0u) return;
+    imageStore(target, ivec2(p),
+               vec4(unpackHalf2x16(ReadWord(tile_source, word_local)),
+                    unpackHalf2x16(ReadWord(tile_source, word_local + 1u))));
+  } else {
+    imageStore(target, ivec2(p), Unpack32(ReadWord(tile_source, word_local)));
+  }
+}

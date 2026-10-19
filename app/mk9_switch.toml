@@ -1,0 +1,9 @@
+# Mortal Kombat Komplete Edition settings, read at start.
+# Anti-aliasing: 0 = off, 2 = 2x, 4 = 4x. Smoother edges, more GPU work.
+sa2_msaa = 0
+# true: a frame that misses 60 fps is shown as soon as it is ready (50-59 fps) instead of dropping to 30.
+sa2_vsync_relaxed = true
+# Face buttons by position, as on an Xbox pad (bottom = A). false = by letter.
+input_xbox_layout = true
+# Single Joy-Cons are held sideways, one per player.
+input_joycon_sideways = true

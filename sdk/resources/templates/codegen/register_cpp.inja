@@ -1,0 +1,37 @@
+//=============================================================================
+// ReXGlue Generated - {{ project }} Function Registration
+//=============================================================================
+
+#include "{{ project }}_init.h"
+#include <rex/system/function_dispatcher.h>
+
+{% if has_register_shards %}{% for shard in register_shards %}void {{ shard.symbol }}(rex::runtime::IModuleRegistrar* registrar);
+{% endfor %}
+{% endif %}
+
+{% if is_dll %}
+#ifdef _WIN32
+#define REX_MODULE_EXPORT __declspec(dllexport)
+#else
+#define REX_MODULE_EXPORT __attribute__((visibility("default")))
+#endif
+
+extern "C" REX_MODULE_EXPORT
+void ReXModule_Register(rex::runtime::IModuleRegistrar* registrar) {
+{% else %}
+void {{ project }}_RegisterFunctions(rex::runtime::IModuleRegistrar* registrar) {
+{% endif %}
+{% if has_register_shards %}{% for shard in register_shards %}  {{ shard.symbol }}(registrar);
+{% endfor %}{% else %}{% for fn in functions %}{% if not fn.below_code_base or fn.is_import %}  registrar->SetFunction({{ fn.address }}, {{ fn.name }});
+{% endif %}{% endfor %}
+{% endif %}
+}
+
+{% if is_dll %}
+// The runtime uses this baked layout for the dispatch table. It must match the
+// constants used by this module's REX_LOOKUP_FUNC macro.
+extern "C" REX_MODULE_EXPORT
+const rex::PPCImageInfo* ReXModule_GetImageInfo() {
+  return &PPCImageConfig;
+}
+{% endif %}

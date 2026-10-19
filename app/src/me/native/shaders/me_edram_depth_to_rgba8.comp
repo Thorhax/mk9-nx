@@ -1,0 +1,81 @@
+#version 450
+
+// Experimental typeless EDRAM export. Depth and stencil MUST use separate
+// sampled aspect views; a depth/stencil image cannot be a storage image.
+// Packing follows ReXGlue xenos.cpp::Float32To20e4 and Vulkan RT transfers.
+// Depth format low8 bits select encoding; bit8 enables coherent MODE4 half-range.
+// Single-sample native images replicate guest MSAA samples (approximation).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source_depth;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D target;
+layout(set = 0, binding = 2) uniform usampler2D source_stencil;
+layout(constant_id = 0) const bool round_float24 = false;
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uvec2 target_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_format; // Depth format: 0 D24S8, 1 D24FS8, NOT color class.
+  uint target_format;
+  uint source_64bpp;
+  uint target_64bpp;
+  uint source_msaa_x, source_msaa_y;
+  uint target_msaa_x, target_msaa_y;
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+uint A20e4(float z) {
+  if (!(z > 0.0)) return 0u; // Also rejects NaN and negative zero.
+  uint bits = floatBitsToUint(z);
+  if (bits >= 0x3FFFFFF8u) return 0xFFFFFFu;
+  if (bits < 0x38800000u) {
+    bits = ((bits & 0x7FFFFFu) | 0x800000u) >> min(113u - (bits >> 23u), 24u);
+  } else {
+    bits += 0xC8000000u;
+  }
+  if (round_float24) bits += 3u + ((bits >> 3u) & 1u);
+  return (bits >> 3u) & 0xFFFFFFu;
+}
+
+uint ReadWord(uint tile, uint word_local, uint row_local) {
+  // Depth and color permute the two 40-word columns of every 80x16 tile.
+  uint x_depth = word_local < (c.tile_width >> 1u) ? word_local + (c.tile_width >> 1u) : word_local - (c.tile_width >> 1u);
+  uvec2 p = uvec2((tile % c.pitch_tiles_source) * c.tile_width + x_depth,
+                  (tile / c.pitch_tiles_source) * c.tile_height + row_local) >>
+             uvec2(c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(p, c.source_size))) return 0u;
+  float z = texelFetch(source_depth, ivec2(p), 0).r;
+  if ((c.source_format & 256u) != 0u) z *= 2.0;
+  uint depth = (c.source_format & 255u) == 0u
+      ? uint(roundEven(clamp(z, 0.0, 1.0) * 16777215.0)) : A20e4(z);
+  return (depth << 8u) | (texelFetch(source_stencil, ivec2(p), 0).r & 255u);
+}
+
+void main() {
+  if (c.pitch_tiles_source == 0u || c.pitch_tiles_target == 0u ||
+      c.source_64bpp != 0u || c.target_64bpp != 0u || (c.source_format & 255u) > 1u) return;
+  uvec2 q = gl_GlobalInvocationID.xy;
+  // Exactly one writer for each collapsed destination host texel.
+  if ((q.x & ((1u << c.target_msaa_x) - 1u)) != 0u ||
+      (q.y & ((1u << c.target_msaa_y) - 1u)) != 0u) return;
+  bool range = c.tiles_count != 0u;
+  if (range && (q.y >= c.tile_height || q.x >= c.tiles_count * c.tile_width)) return;
+  uint relative = q.x / c.tile_width;
+  uint word_local = q.x % c.tile_width;
+  uint tile_target = range ? c.tile_target_start + relative
+      : (q.y / c.tile_height) * c.pitch_tiles_target + relative;
+  uint tile_source = range ? c.tile_source_start + relative : tile_target;
+  uvec2 p = uvec2((tile_target % c.pitch_tiles_target) * c.tile_width + word_local,
+                  (tile_target / c.pitch_tiles_target) * c.tile_height + q.y % c.tile_height) >>
+             uvec2(c.target_msaa_x, c.target_msaa_y);
+  if (any(greaterThanEqual(p, c.target_size))) return;
+  uint word = ReadWord(tile_source, word_local, q.y % c.tile_height);
+  uvec4 bytes = uvec4(word, word >> 8u, word >> 16u, word >> 24u) & 255u;
+  imageStore(target, ivec2(p), vec4(bytes) * (1.0 / 255.0));
+}

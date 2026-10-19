@@ -1,0 +1,57 @@
+#version 450
+// Generated copy of me_edram_stencil_to_buffer.comp for a 2x MSAA source (keep in sync).
+#define SOURCE_MSAA2
+
+// Stencil of a depth->depth EDRAM import for the copy engine: one byte per pixel of a 1x destination
+// rectangle into a buffer, then vkCmdCopyBufferToImage(STENCIL aspect) writes it. Replaces the 8
+// stencil-bit draw passes (Maxwell has no shader stencil export, and each masked stencil pass costs as
+// much as a full one). Addressing is identical to me_edram_depth_to_depth.frag (1x source) and
+// me_edram_depth_msaa2_to_depth_1x.frag (2x source, SOURCE_MSAA2). Destination: 1x, no 40-column swap.
+layout(local_size_x = 8, local_size_y = 8) in;
+#ifdef SOURCE_MSAA2
+layout(set = 0, binding = 0) uniform usampler2DMS source_stencil;
+#else
+layout(set = 0, binding = 0) uniform usampler2D source_stencil;
+#endif
+layout(std430, set = 0, binding = 1) writeonly buffer Output { uint words[]; };
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_msaa_x, source_msaa_y;
+  uint rect_x, rect_y, rect_w, rect_h;  // destination pixels; rect_w is a multiple of 4
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+uint Stencil(uvec2 pixel) {
+  uint tile = (pixel.y / c.tile_height) * c.pitch_tiles_target + pixel.x / c.tile_width;
+  if (tile < c.tile_target_start || tile - c.tile_target_start >= c.tiles_count) return 0u;
+  uint source_tile = c.tile_source_start + tile - c.tile_target_start;
+  uvec2 source_physical = uvec2((source_tile % c.pitch_tiles_source) * c.tile_width + pixel.x % c.tile_width,
+                               (source_tile / c.pitch_tiles_source) * c.tile_height + pixel.y % c.tile_height);
+#ifdef SOURCE_MSAA2
+  ivec2 source_pixel = ivec2(source_physical.x, source_physical.y / 2u);
+  if (any(greaterThanEqual(uvec2(source_pixel), c.source_size))) return 0u;
+  return texelFetch(source_stencil, source_pixel, int((source_physical.y & 1u) ^ 1u)).r & 255u;
+#else
+  uvec2 source_pixel = source_physical >> uvec2(c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(source_pixel, c.source_size))) return 0u;
+  return texelFetch(source_stencil, ivec2(source_pixel), 0).r & 255u;
+#endif
+}
+
+void main() {
+  uvec2 id = gl_GlobalInvocationID.xy;
+  uint words_per_row = c.rect_w / 4u;
+  if (id.x >= words_per_row || id.y >= c.rect_h) return;
+  uvec2 pixel = uvec2(c.rect_x + id.x * 4u, c.rect_y + id.y);
+  uint word = Stencil(pixel) | (Stencil(pixel + uvec2(1u, 0u)) << 8u) |
+              (Stencil(pixel + uvec2(2u, 0u)) << 16u) | (Stencil(pixel + uvec2(3u, 0u)) << 24u);
+  words[id.y * words_per_row + id.x] = word;
+}

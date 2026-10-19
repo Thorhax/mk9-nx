@@ -1,0 +1,20 @@
+#version 450
+
+// Sample half-range D32 depth and materialize the numeric guest-space depth.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D target;
+layout(push_constant) uniform Constants {
+  uvec2 source_size, target_size;
+  uvec2 offset_source, offset_target;
+  uvec2 extent;
+  float guest_factor;
+} c;
+void main() {
+  uvec2 q = gl_GlobalInvocationID.xy;
+  if (any(greaterThanEqual(q, c.extent))) return;
+  uvec2 src = q + c.offset_source, dst = q + c.offset_target;
+  if (any(greaterThanEqual(src, c.source_size)) ||
+      any(greaterThanEqual(dst, c.target_size))) return;
+  imageStore(target, ivec2(dst), vec4(texelFetch(source, ivec2(src), 0).r * c.guest_factor));
+}

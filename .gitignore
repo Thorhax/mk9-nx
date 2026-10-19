@@ -1,0 +1,67 @@
+# Nothing derived from the game is ever committed: its files, the code generated from default.xex, the shaders made
+# from it, and the binaries built from that code. Everyone makes them from their own copy.
+
+# --- Game files and what is made from them -------------------------------------
+/assets/
+/app/generated/
+*.xex
+*.xexp
+*.iso
+*.bin
+*.ucode
+*.mesp
+*.mesp.idx
+*.nxpack
+*.nxidx
+
+# --- Build output --------------------------------------------------------------
+/out/
+/build/
+/sdk/out/
+/app/out/
+/shaders/wasm/out/
+/mesa/work/
+*.nro
+*.nacp
+*.elf
+*.o
+*.obj
+*.a
+*.gcda
+*.stream
+# ...except the PGO profile of the released NRO (counts of which code ran, no game code or data)
+!/pgo/*.gcda
+
+# --- SDK third-party sources: tools/fetch_thirdparty.py fetches them; only the files this port changed are tracked --
+/sdk/thirdparty/*
+!/sdk/thirdparty/CMakeLists.txt
+!/sdk/thirdparty/FFmpeg
+/sdk/thirdparty/FFmpeg/*
+!/sdk/thirdparty/FFmpeg/config.h
+!/sdk/thirdparty/FFmpeg/config_switch_aarch64.h
+!/sdk/thirdparty/FFmpeg/config_masseffect_wmv3.h
+!/sdk/thirdparty/FFmpeg/libavcodec
+/sdk/thirdparty/FFmpeg/libavcodec/*
+!/sdk/thirdparty/FFmpeg/libavcodec/mdct_template.c
+!/sdk/thirdparty/FFmpeg/libavcodec/fft_template.c
+!/sdk/thirdparty/ffmpeg-overlay
+/sdk/thirdparty/ffmpeg-overlay/*
+!/sdk/thirdparty/ffmpeg-overlay/codec_list.c
+
+# --- Logs, dumps and run data ----------------------------------------------------
+*.log
+*.dmp
+*.err
+/cache/
+/logs/
+
+# --- Tools and editors -------------------------------------------------------------
+__pycache__/
+*.pyc
+.vs/
+.vscode/
+.claude/
+.DS_Store
+
+# --- Personal NRO icon (may be game artwork; used instead of app/icon.jpg when present) ---
+/app/icon_local.jpg

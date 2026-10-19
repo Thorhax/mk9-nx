@@ -1,0 +1,22 @@
+# ReXGlue recompilation manifest for Mortal Kombat Komplete Edition (Xbox 360 disc, title 575207FD, default.xex).
+#
+# `rexglue codegen mk9_manifest.toml` (from app/). The project name sets the prefix of everything generated:
+# generated/default/mk9_{init,pch,funcs}.h, mk9_recomp.N.cpp, and the CMake target mk9_recomp.
+#
+# default.xex: image base 0x82000000, entry point 0x8236E580, image size 0x01560000, XEX version 0.0.0.8,
+# media id 6579DAFA (tools/extract_iso.py --info).
+
+[project]
+name = "mk9"
+sdk_version = "0.10.0"
+# Your own game files: the extracted disc (assets/game_root, made by tools/extract_iso.py). This disc names the
+# executable default.xex (lower case). Nothing from the game is distributed with this project.
+game_root = "../assets/game_root"
+
+[entrypoint]
+file_path = "../assets/game_root/default.xex"
+out_directory_path = "generated/default"
+
+#   overrides.toml       written by hand: code the automatic function discovery misses, each with its evidence
+#   codegen_flavor.toml  written by tools/codegen.sh --flavor: empty (classic) or a copy of perf_overrides.toml
+includes = ["overrides.toml", "codegen_flavor.toml"]

@@ -1,0 +1,12 @@
+# Settings read at startup (ReXGlue cvars). The build copies this file next to the executable when there is none
+# there yet; edit the copy. Any cvar can also be given on the command line (--name=value) or as REX_<NAME>.
+
+# GPU: stage 3 draws with ReXGlue's emulated Xenos GPU (Vulkan on Linux).
+gpu_plugin = "xenos"
+
+log_level = "info"
+
+# Development defaults: launch muted and minimized, so test runs do not take over the desktop or the speakers.
+# Set both to false to play.
+audio_mute = true
+window_start_minimized = true

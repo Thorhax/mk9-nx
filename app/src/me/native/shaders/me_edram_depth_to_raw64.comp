@@ -1,0 +1,104 @@
+#version 450
+
+// Experimental depth/stencil -> color typeless EDRAM transfer. Separate sampled
+// depth/stencil aspect views are required. Depth format bit8 selects half-range.
+// Single-sample native images replicate guest MSAA samples (approximation).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source_depth;
+layout(set = 0, binding = 1, rgba16ui) uniform writeonly uimage2D target;
+layout(set = 0, binding = 2) uniform usampler2D source_stencil;
+layout(constant_id = 0) const bool round_float24 = false;
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uvec2 target_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_format; // Depth format: 0 D24S8, 1 D24FS8, NOT color class.
+  uint target_format; // Existing color class: 2 UNORM10, 3 7e3, 7 FP16.
+  uint source_64bpp;
+  uint target_64bpp;
+  uint source_msaa_x, source_msaa_y;
+  uint target_msaa_x, target_msaa_y;
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+// ReXGlue xenos.cpp::Float32To20e4, without the SDK's half-range remapping.
+uint A20e4(float z) {
+  if (!(z > 0.0)) return 0u;
+  uint bits = floatBitsToUint(z);
+  if (bits >= 0x3FFFFFF8u) return 0xFFFFFFu;
+  if (bits < 0x38800000u) {
+    bits = ((bits & 0x7FFFFFu) | 0x800000u) >> min(113u - (bits >> 23u), 24u);
+  } else {
+    bits += 0xC8000000u;
+  }
+  if (round_float24) bits += 3u + ((bits >> 3u) & 1u);
+  return (bits >> 3u) & 0xFFFFFFu;
+}
+
+float From7e3(uint f10) {
+  f10 &= 0x3FFu;
+  if (f10 == 0u) return 0.0;
+  uint mantissa = f10 & 0x7Fu;
+  uint exponent = f10 >> 7u;
+  if (exponent == 0u) {
+    uint displacement = 7u - uint(findMSB(mantissa));
+    exponent = 1u - displacement;
+    mantissa = (mantissa << displacement) & 0x7Fu;
+  }
+  return uintBitsToFloat(((exponent + 124u) << 23u) | (mantissa << 16u));
+}
+
+vec4 Unpack32(uint word) {
+  if (c.target_format == 2u) {
+    return vec4(float(word & 0x3FFu), float((word >> 10u) & 0x3FFu),
+                float((word >> 20u) & 0x3FFu), float(word >> 30u)) /
+           vec4(1023.0, 1023.0, 1023.0, 3.0);
+  }
+  return vec4(From7e3(word), From7e3(word >> 10u), From7e3(word >> 20u),
+              float(word >> 30u) * (1.0 / 3.0));
+}
+
+uint ReadWord(uint tile, uint word_local, uint row_local) {
+  uint x_depth = word_local < (c.tile_width >> 1u) ? word_local + (c.tile_width >> 1u) : word_local - (c.tile_width >> 1u);
+  uvec2 p = uvec2((tile % c.pitch_tiles_source) * c.tile_width + x_depth,
+                  (tile / c.pitch_tiles_source) * c.tile_height + row_local) >>
+             uvec2(c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(p, c.source_size))) return 0u;
+  float z = texelFetch(source_depth, ivec2(p), 0).r;
+  if ((c.source_format & 256u) != 0u) z *= 2.0;
+  uint depth = (c.source_format & 255u) == 0u
+      ? uint(roundEven(clamp(z, 0.0, 1.0) * 16777215.0)) : A20e4(z);
+  return (depth << 8u) | (texelFetch(source_stencil, ivec2(p), 0).r & 255u);
+}
+
+void main() {
+  if (c.pitch_tiles_source == 0u || c.pitch_tiles_target == 0u ||
+      c.source_64bpp != 0u || c.target_64bpp > 1u || (c.source_format & 255u) > 1u ||
+      (c.target_64bpp != 0u && c.target_format != 7u) ||
+      (c.target_64bpp == 0u && c.target_format != 2u && c.target_format != 3u)) return;
+  uvec2 q = gl_GlobalInvocationID.xy;
+  if ((q.x & ((1u << (c.target_64bpp + c.target_msaa_x)) - 1u)) != 0u ||
+      (q.y & ((1u << c.target_msaa_y) - 1u)) != 0u) return;
+  bool range = c.tiles_count != 0u;
+  if (range && (q.y >= c.tile_height || q.x >= c.tiles_count * c.tile_width)) return;
+  uint relative = q.x / c.tile_width;
+  uint word_local = q.x % c.tile_width;
+  uint tile_target = range ? c.tile_target_start + relative
+      : (q.y / c.tile_height) * c.pitch_tiles_target + relative;
+  uint tile_source = range ? c.tile_source_start + relative : tile_target;
+  uvec2 p = uvec2((tile_target % c.pitch_tiles_target) * (c.tile_width >> c.target_64bpp) +
+                      (word_local >> c.target_64bpp),
+                  (tile_target / c.pitch_tiles_target) * c.tile_height + q.y % c.tile_height) >>
+             uvec2(c.target_msaa_x, c.target_msaa_y);
+  if (any(greaterThanEqual(p, c.target_size))) return;
+  uint lo = ReadWord(tile_source, word_local, q.y % c.tile_height);
+  uint hi = ReadWord(tile_source, word_local + 1u, q.y % c.tile_height);
+  imageStore(target, ivec2(p), uvec4(lo & 65535u, lo >> 16u, hi & 65535u, hi >> 16u));
+}

@@ -1,0 +1,31 @@
+# Code generation options for speed: the "optimised codegen" flavour (tools/codegen.sh --flavor optimised copies this
+# file to codegen_flavor.toml, which usf4_manifest.toml includes; --flavor classic writes an empty one). Root keys: they
+# must stay outside any table. Build-time, so they come as an A/B NRO pair.
+#
+# From sa2-nx's perf_overrides.toml (masseffect-nx measured), stage A: the options that need no per-function audit.
+# They only change how the C++ is written, so the compiler can keep guest state in host registers and drop dead stores;
+# the guest-visible result is the same:
+#   - cr0-cr7, ctr, xer and the lwarx reservation as C++ locals;
+#   - skip_msr: no mfmsr/mtmsrd fences, ctx.msr stores or global lock around the guest's interrupt-off sequences.
+#     USF4 0.5.5 console profile: the main thread waited on that one process-wide recursive mutex in the XDK's
+#     interlocked list pops (sub_82966BA8: mfmsr; mtmsrd r13; lwarx; stwcx.; mtmsrd) against the job workers and the
+#     audio thread; a stwcx. is already a compare-and-swap. On the Xbox 360 an interrupt-off section only keeps the
+#     same core from being interrupted; other cores run on.
+#   - dform_disp_split: D-form loads/stores as base + zext(reg) + disp (differs only when reg + disp crosses 2^32, a
+#     guest fault either way);
+#   - fctiwz_inline: fctiwz as fcvtzs + NaN select;
+#   - fp_moves_modeless: scalar float moves switch no host flush mode (sa2-nx's generator option).
+# Post-codegen steps (tools/post_codegen.py): guest loads/stores without volatile (tools/pch_no_volatile.py, +15-20 %
+# fps in masseffect-nx) with a compiler barrier at every loop header (tools/loop_barriers.py, REQUIRED: GCC otherwise
+# turns guest polling loops into infinite loops) and direct calls to unhooked functions (tools/direct_calls.py: the
+# weak sub_X aliases cannot be inlined).
+# Not yet (stage B, each needs the audits sa2-nx made: tools/read_before_write.py, tools/non_argument_audit.py):
+# non_volatile_as_local, elide_lr_stores, non_argument_as_local.
+cr_as_local = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+skip_msr = true
+dform_disp_split = true
+fctiwz_inline = true
+fp_moves_modeless = true

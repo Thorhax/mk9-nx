@@ -1,0 +1,12 @@
+//=============================================================================
+// ReXGlue Generated - {{ project }} Function Registration Shard
+//=============================================================================
+
+#include "{{ project }}_pch.h"
+#include <rex/system/function_dispatcher.h>
+
+{% for fn in functions %}DECLARE_REX_FUNC({{ fn.name }});
+{% endfor %}
+void {{ register_symbol }}(rex::runtime::IModuleRegistrar* registrar) {
+{% for fn in functions %}  registrar->SetFunction({{ fn.address }}, {{ fn.name }});
+{% endfor %}}

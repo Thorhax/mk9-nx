@@ -1,0 +1,40 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "win-pc",
+            "displayName": "Windows x64, clang, RelWithDebInfo",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/../out/pc",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_FLAGS": "-march=x86-64-v2",
+                "CMAKE_CXX_FLAGS": "-march=x86-64-v2",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "REXGLUE_ENABLE_TRACY": "OFF",
+                "REXGLUE_USE_VULKAN": "ON"
+            },
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        {
+            "name": "linux-pc",
+            "displayName": "Linux x64, clang, RelWithDebInfo",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/../out/pc",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_FLAGS": "-march=x86-64-v2",
+                "CMAKE_CXX_FLAGS": "-march=x86-64-v2",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            },
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "win-pc", "configurePreset": "win-pc" },
+        { "name": "linux-pc", "configurePreset": "linux-pc" }
+    ]
+}

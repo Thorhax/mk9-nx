@@ -1,0 +1,96 @@
+#version 450
+
+// Raw UINT views preserve all half-float bit patterns, including NaN payloads.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D source;
+layout(set = 0, binding = 1, rgba16ui) uniform writeonly uimage2D target;
+layout(push_constant) uniform Constants {
+  uvec2 source_size;
+  uvec2 target_size;
+  uint pitch_tiles_source;
+  uint pitch_tiles_target;
+  uint tile_source_start;
+  uint tile_target_start;
+  uint tiles_count;
+  uint source_format;
+  uint target_format;
+  uint source_64bpp;
+  uint target_64bpp;
+  uint source_msaa_x, source_msaa_y;
+  uint target_msaa_x, target_msaa_y;
+  // sa2-nx render resolution: the EDRAM tile in host samples (80x16 at the game's 1280x720; 20q x 4q at
+  // q/4 of it, me_resolution_scale.h). Every tile size below is relative to it.
+  uint tile_width;
+  uint tile_height;
+} c;
+
+uint A7e3(float value) {
+  uint f32 = floatBitsToUint(clamp(value, 0.0, 31.875));
+  uint denormal = ((f32 & 0x7FFFFFu) | 0x800000u) >> min(125u - (f32 >> 23u), 24u);
+  uint normal = f32 - (124u << 23u);
+  uint biased = f32 < 0x3E800000u ? denormal : normal;
+  return ((biased + 0x7FFFu + ((biased >> 16u) & 1u)) >> 16u) & 0x3FFu;
+}
+
+float From7e3(uint f10) {
+  f10 &= 0x3FFu;
+  if (f10 == 0u) return 0.0;
+  uint mantissa = f10 & 0x7Fu;
+  uint exponent = f10 >> 7u;
+  if (exponent == 0u) {
+    uint displacement = 7u - uint(findMSB(mantissa));
+    exponent = 1u - displacement;
+    mantissa = (mantissa << displacement) & 0x7Fu;
+  }
+  return uintBitsToFloat(((exponent + 124u) << 23u) | (mantissa << 16u));
+}
+
+uint Pack32(vec4 v, uint format) {
+  if (format == 2u) {
+    uvec4 n = uvec4(roundEven(clamp(v, 0.0, 1.0) * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+    return n.r | (n.g << 10u) | (n.b << 20u) | (n.a << 30u);
+  }
+  return A7e3(v.r) | (A7e3(v.g) << 10u) | (A7e3(v.b) << 20u) |
+         (uint(roundEven(clamp(v.a, 0.0, 1.0) * 3.0)) << 30u);
+}
+
+vec4 Unpack32(uint word, uint format) {
+  if (format == 2u) {
+    return vec4(float(word & 0x3FFu), float((word >> 10u) & 0x3FFu),
+                float((word >> 20u) & 0x3FFu), float(word >> 30u)) /
+           vec4(1023.0, 1023.0, 1023.0, 3.0);
+  }
+  return vec4(From7e3(word), From7e3(word >> 10u), From7e3(word >> 20u),
+              float(word >> 30u) * (1.0 / 3.0));
+}
+
+uvec2 Coordinate(uint tile, uint word_local, uint pitch_tiles, uint is_64bpp, uint msaa_x, uint msaa_y) {
+  uint tile_width_pixels = c.tile_width >> is_64bpp;
+  return uvec2((tile % pitch_tiles) * tile_width_pixels + (word_local >> is_64bpp),
+               (tile / pitch_tiles) * c.tile_height + gl_GlobalInvocationID.y % c.tile_height) >> uvec2(msaa_x, msaa_y);
+}
+
+uint ReadWord(uint tile, uint word_local) {
+  uvec2 p = Coordinate(tile, word_local, c.pitch_tiles_source, c.source_64bpp, c.source_msaa_x, c.source_msaa_y);
+  if (any(greaterThanEqual(p, c.source_size))) return 0u;
+  return Pack32(imageLoad(source, ivec2(p)), c.source_format);
+}
+
+void main() {
+  uvec2 q = gl_GlobalInvocationID.xy;
+  // Single writer per collapsed host texel. Physical samples are replicated on read.
+  if ((q.x & ((1u << (c.target_64bpp + c.target_msaa_x)) - 1u)) != 0u ||
+      (q.y & ((1u << c.target_msaa_y) - 1u)) != 0u) return;
+  bool range = c.tiles_count != 0u;
+  if (range && (q.y >= c.tile_height || q.x >= c.tiles_count * c.tile_width)) return;
+  uint relative = q.x / c.tile_width;
+  uint word_local = q.x % c.tile_width;
+  uint tile_target = range ? c.tile_target_start + relative
+                            : (q.y / c.tile_height) * c.pitch_tiles_target + relative;
+  uint tile_source = range ? c.tile_source_start + relative : tile_target;
+  uvec2 p = Coordinate(tile_target, word_local, c.pitch_tiles_target, c.target_64bpp, c.target_msaa_x, c.target_msaa_y);
+  if (any(greaterThanEqual(p, c.target_size))) return;
+  uint lo = ReadWord(tile_source, word_local);
+  uint hi = ReadWord(tile_source, word_local + 1u);
+  imageStore(target, ivec2(p), uvec4(lo & 65535u, lo >> 16u, hi & 65535u, hi >> 16u));
+}

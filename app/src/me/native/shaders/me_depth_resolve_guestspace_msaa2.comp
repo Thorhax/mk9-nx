@@ -1,0 +1,32 @@
+#version 450
+// Actual native2x sampled D32 -> single-sample R32 numeric guest depth.
+// Caller must prove D32S8/sample2 source, R32/sample1 destination, finite depth
+// and half-range metadata. sample_select is already SDK-sanitized depth0/1;
+// unsanitized selector values deliberately do not write any destination texels.
+// SDK native2x guest0=host1, guest1=host0. No depth averaging/Float24 repack.
+layout(local_size_x=8,local_size_y=8) in;
+layout(set=0,binding=0) uniform sampler2DMS source;
+layout(set=0,binding=1,r32f) uniform writeonly image2D target;
+layout(push_constant) uniform Constants {
+  uvec2 source_size,target_size;
+  uvec2 offset_source,offset_target;
+  uvec2 extent;
+  float guest_factor;
+  uint sample_select;
+} c;
+void main(){
+  uvec2 q=gl_GlobalInvocationID.xy;
+  if(c.sample_select>1u || textureSamples(source)!=2 ||
+     !(c.guest_factor==1.0 || c.guest_factor==2.0))return;
+  if(any(greaterThanEqual(q,c.extent)))return;
+  // Subtraction checks prevent unsigned overflow before shifted ROI addition.
+  if(any(greaterThanEqual(c.offset_source,c.source_size)) ||
+     any(greaterThanEqual(c.offset_target,c.target_size)) ||
+     any(greaterThanEqual(q,c.source_size-c.offset_source)) ||
+     any(greaterThanEqual(q,c.target_size-c.offset_target)))return;
+  uvec2 src=q+c.offset_source,dst=q+c.offset_target;
+  if(any(greaterThanEqual(src,uvec2(textureSize(source)))) ||
+     any(greaterThanEqual(dst,uvec2(imageSize(target)))))return;
+  float z=texelFetch(source,ivec2(src),int(c.sample_select^1u)).r;
+  imageStore(target,ivec2(dst),vec4(z*c.guest_factor));
+}

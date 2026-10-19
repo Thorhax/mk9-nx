@@ -1,0 +1,33 @@
+# Mortal Kombat Komplete Edition, Switch build: fixed settings compiled into the NRO (src/mk9_app.h BuiltInConfig),
+# applied before the player's mk9.toml next to the NRO, which may still override any of them key by key.
+#
+# Taken from usf4-nx's Switch defaults: only the renderer settings that are not tied to USF4's own code. USF4's game
+# hooks (one tile instead of predicated tiling, Direct3D GPU wait, job waits, memcpy) are not ported: MK9 needs its
+# own addresses for each (docs/mk9-notes.md).
+
+# The native Vulkan renderer (NVK); the emulated GPU is far too slow on the console.
+sa2_renderer_native = true
+sa2_render_height_handheld = 720
+sa2_render_height_docked = 1080
+sa2_shader_misses = ""
+
+# First console builds: keep a log on the SD card (sdmc:/switch/mk9-nx/logs) to diagnose boots.
+log_level = "info"
+log_to_file = true
+
+# The renderer's enhancements (sa2-nx docs/enhancements.md), as on PC: every key is on unless listed here.
+sa2_cpu_enhancements = true
+sa2_noncpu_enhancements = true
+
+# Game files: read the game_root folder next to the NRO directly (no second 7 GB copy as an asset pack).
+asset_pack_build = false
+
+# Profiling: GPU time per pass category and CPU stack samples. Off; set both true for a profiling build.
+sa2_gpu_marks_categories = false
+switch_profile_stacks = false
+
+# usf4-nx 0.5.3 / 0.5.4 / 0.7.2 renderer settings (game-independent): asynchronous submission, a 4096-call deferred
+# recording queue, no worker naps.
+usf4_deferred_async_submit = true
+usf4_deferred_slots_log2 = 12
+sa2_native_deferred_recording_naps = 0

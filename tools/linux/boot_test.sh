@@ -26,6 +26,7 @@ shift $((OPTIND - 1))
 [ -x "$exe" ] || { echo "$exe not built (cmake --build out/pc)" >&2; exit 2; }
 
 log="$root/out/pc/boot.log"
+rm -f "$log"  # the SDK appends to an existing log file: one run per log
 mkdir -p "$root/out/pc/captures"
 # A free display number for the hidden X server.
 disp=99

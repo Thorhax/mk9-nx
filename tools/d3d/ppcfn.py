@@ -8,7 +8,7 @@ for a in sys.argv[1:]:
     if a.startswith('--max='): mx = int(a.split('=')[1])
 DEF = re.compile(r'^DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\) \{$')
 found = {}
-for f in sorted(glob.glob(GEN + '/sa2_recomp.*.cpp')):
+for f in sorted(glob.glob(GEN + '/*_recomp.*.cpp')):
     cur = None
     for ln in open(f, encoding='utf-8', errors='ignore'):
         m = DEF.match(ln)

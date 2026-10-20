@@ -85,6 +85,7 @@ CRT code as USF4's:
 | per-draw shader patching | `sub_82BFEC60`, `sub_82BFCD60` | r4 = container on every draw (484,501 calls in 130 s): Direct3D-internal, not hooked |
 | Direct3D device | `0x40012980` | r3 of the shader load in a run (logged once by `mk9_me_hooks.cpp`); command-buffer pointer at device+48 as in usf4-nx (`lwz r3,48(r31)` at `0x82BFEF80`) |
 | pixel-shader container checks | `sub_82BED4D0`, `sub_82C0B7E8`, `sub_82C13B48`, `sub_82C36AF0`, `sub_82CA06D8`, `sub_831AEE20`, `sub_8324BE50` | build the pixel container magic `0x102A1100`; CreatePixelShader is among them (USF4: 60-instruction function, r3 = container) |
+| GPU wait iteration | `sub_82BF5680` | usf4-nx's `sub_821F54E0` shape: `cctpl`, a 4 x 8 `db16cyc` delay loop, then the hung bit `lbz 11069(device)`, the read-pointer word `lwz 11024(device)`, 5000-tick timeout. 216 bytes, FNV-1a 0x853791F298FEE8ED. `app/src/mk9_gpu_wait.cpp` (usf4-nx's `mk9_cpu_gpu_wait_sleep` enhancement) makes it sleep until the ring progresses: PC run, ~7-8 s asleep per 10 s on the waiting thread, no change in the image. `sub_82BF61E0` (864 bytes, 8 `db16cyc`) is a second wait, not hooked |
 | `D3DDevice_Swap` | `sub_82BF6D58` | the only caller of `VdSwap` (import thunk `0x83376194`); called from `sub_82BF73E0`, `sub_826B57F8`, `sub_82BF1D18`, `sub_82C0A640`. Hooked by `app/src/mk9_frame_counter.cpp` for the `[fps]` line |
 
 ## App changes from usf4-nx

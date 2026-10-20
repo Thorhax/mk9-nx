@@ -61,6 +61,8 @@ set(MK9_SOURCES
     src/me/native/sa2_native_glue.cpp
     # MK9's Direct3D addresses (shader load, Draw*, shader container parse) and the shader dump (mk9_dump_shaders).
     src/me/mk9_me_hooks.cpp
+    # CPU enhancement: Direct3D's GPU wait (sub_82BF5680) sleeps until the ring progresses (from usf4-nx).
+    src/mk9_gpu_wait.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
     src/me/mk9_api_stubs.cpp
     # Render resolution per console mode (docked / handheld) and MSAA: sa2_render_height_*, sa2_msaa.

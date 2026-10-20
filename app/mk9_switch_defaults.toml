@@ -8,7 +8,9 @@
 # The native Vulkan renderer (NVK); the emulated GPU is far too slow on the console.
 sa2_renderer_native = true
 sa2_render_height_handheld = 720
-sa2_render_height_docked = 1080
+# First console tests: the game's own 1280x720 in both modes (usf4-nx renders 1080 docked; MK9 is heavier). Raise it
+# in mk9.toml to try more.
+sa2_render_height_docked = 720
 sa2_shader_misses = ""
 
 # First console builds: keep a log on the SD card (sdmc:/switch/mk9-nx/logs) to diagnose boots.

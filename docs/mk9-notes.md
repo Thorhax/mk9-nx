@@ -223,3 +223,17 @@ the enhancements and the vertex cache off too. Not investigated yet; UE3's Xbox 
 the vertex shader from per-particle data (vertex fetches with computed indices), a path USF4 did not use. Next:
 trace a frame with sparks (`banjo_trace_frame_s` + `usf4_trace_until_s`), look at the particle draws' primitive type,
 vertex fetches and the translated VS.
+
+Bisection so far (same 260-300 s scripted match, GTX 960M; the ladder's opponents and stages differ between runs):
+- `usf4_vertex_cache = false`: still broken. Both enhancement masters off: still broken.
+- `banjo_native_skip_indexed = true` (skip draws whose VS fetches by a computed index): still broken, and the
+  fighters are still drawn, so MK9's skinning does not use computed-index fetches.
+- `sa2_native_dedupe_vertices = false`, `sa2_native_dedupe_sample = false`, `sa2_native_vertices_base_zero = false`:
+  **much worse** (whole stages and fighters in garbage colors). The slower the ring thread, the worse the image:
+  this points at a race between the game rewriting dynamic vertex data and the ring thread reading it (the copies
+  are synchronous on the ring: `sa2_native_uploads_thread` is off). Mass Effect had the same class of bug for its
+  transient UI buffers (comment at `sa2_native_uploads_thread`). Candidates: Direct3D's inline-data ring (the UP
+  draws' vertices, reclaimed by the ring read pointer the renderer writes back) or a fence reported before the draws
+  it covers are consumed. To check: which of the six draw hooks the particle draws come through, and when the
+  renderer writes back the read pointer (`device+11024`) relative to consuming the indirect buffers.
+- The emulated GPU draws the same effects correctly.

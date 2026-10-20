@@ -186,3 +186,21 @@ microcode): those still come from `sa2_shader_misses` runs (or repairs of the va
   containers in `missing/`. The street stage, both fighters, ROUND 1 and the HUD are drawn right. 21-22 fps on the GTX
   960M (GPU-bound laptop; usf4-nx's PC fights on this machine were also ~10-13 fps GPU-bound with the native
   renderer, while its console build reached 60).
+
+## Switch (stage 5)
+
+Built as usf4-nx's (docs/building.md, "Switch"): Docker `devkitpro/devkita64`, nfsmw-nx's Mesa 26.2.2 Horizon SDK
+with libvulkan.a repacked (copied from usf4-nx's `out/tools/mesa-26.2.2-repacked`), glslangValidator built in the
+image (`out/glslang-dkp`, copied).
+
+- **0.0.1 (2026-10-20)**, classic codegen, **no LTO** (as usf4-nx's first NRO): 876 build steps, ~2 h 20 min on this
+  machine (shared with PC tests); `out/nx/mk9.nro` 102 MB, ELF archived as `out/nx/mk9-0.0.1.elf` for symbolizing
+  crash reports. Includes the native renderer hooks, the GPU-wait sleep, the FP-state stubs and the full shader
+  package. Settings compiled in: `app/mk9_switch_defaults.toml` (native renderer, **1280x720 in both modes**, log to
+  the SD card). SD-card zip: `../mk9-nx-switch-0.0.1.zip` (NRO, `sa2_shaders.mesp` 777 MB + `.idx` 33 MB, README).
+  **Not run on a console yet.**
+- An LTO build of the same sources goes to `out/nx-lto` (usf4-nx's released builds are LTO).
+
+What to look at in the first console run: whether it boots (memory: MK9's UE3 uses most of the 360's 512 MB, plus
+the renderer and the 33 MB shader index on the host side), the `[fps]` lines in `logs/`, crash reports
+(`atmosphere/crash_reports`, symbolize with `out/nx/mk9-0.0.1.elf`).

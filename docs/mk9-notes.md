@@ -197,10 +197,29 @@ image (`out/glslang-dkp`, copied).
   machine (shared with PC tests); `out/nx/mk9.nro` 102 MB, ELF archived as `out/nx/mk9-0.0.1.elf` for symbolizing
   crash reports. Includes the native renderer hooks, the GPU-wait sleep, the FP-state stubs and the full shader
   package. Settings compiled in: `app/mk9_switch_defaults.toml` (native renderer, **1280x720 in both modes**, log to
-  the SD card). SD-card zip: `../mk9-nx-switch-0.0.1.zip` (NRO, `sa2_shaders.mesp` 777 MB + `.idx` 33 MB, README).
+  the SD card). SD-card zip: `../mk9-nx-switch-0.0.1.zip` (NRO, `sa2_shaders.mesp` + `.idx`, README; repacked with the filtered
+  773 MB package, see below).
   **Not run on a console yet.**
-- An LTO build of the same sources goes to `out/nx-lto` (usf4-nx's released builds are LTO).
+- LTO build of the same sources: `out/nx-lto/mk9.nro` (123 MB, ELF `out/nx-lto/mk9-0.0.1-lto.elf`), zipped NRO only as
+  `../mk9-nx-switch-0.0.1-lto-nro-only.zip` (drop-in replacement for the NRO of the full zip). Not run on a console.
 
 What to look at in the first console run: whether it boots (memory: MK9's UE3 uses most of the 360's 512 MB, plus
 the renderer and the 33 MB shader index on the host side), the `[fps]` lines in `logs/`, crash reports
 (`atmosphere/crash_reports`, symbolize with `out/nx/mk9-0.0.1.elf`).
+
+### Stage geometry broken by package duplicates; particles (2026-10-20)
+
+A 450 s run through a whole match (Beginner, scripted attacks: the match is won, "JOHNNY CAGE WINS", the ladder goes
+on) showed the rooftop, desert and Pit stages drawn as huge single-colored triangles, while the street stage had
+been fine. Not the vertex cache (`usf4_vertex_cache = false`) nor any switchable enhancement (both masters off):
+the package. With the dump-only package of round 1 the Pit stage had been right. The scan adds, for 5,305 runtime
+shaders, the package copy of the same microcode with the header the game has not rewritten yet (usf4-nx's notes warn
+about this for USF4's EMZ shaders), and identification by microcode can take that copy. `tools/filter_scanned_shaders.py`
+keeps only scanned containers whose microcode no runtime container has (13,700 of 19,005); package 18,880 shaders,
+773 MB. Same run: stages and fighters right (desert vs Noob Saibot, Soul Chamber vs Sonya), `unidentified loads: 0`.
+
+Still wrong: **particles** (hit sparks, dust, blood) come out as long colored streaks and full-screen planes, with
+the enhancements and the vertex cache off too. Not investigated yet; UE3's Xbox sprite particles expand each quad in
+the vertex shader from per-particle data (vertex fetches with computed indices), a path USF4 did not use. Next:
+trace a frame with sparks (`banjo_trace_frame_s` + `usf4_trace_until_s`), look at the particle draws' primitive type,
+vertex fetches and the translated VS.

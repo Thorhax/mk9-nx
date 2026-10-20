@@ -157,6 +157,8 @@ bool UnwatchHotReadPage(uint64_t host_address) {
 }  // namespace
 #endif
 
+u8* g_store_cards = nullptr;  // mk9-nx (2026-10-20): the store cards' table (xmemory.h); none in MK9
+
 bool Memory::Initialize() {
   file_name_ = fmt::format("xenia_memory_{}", chrono::Clock::QueryHostTickCount());
 

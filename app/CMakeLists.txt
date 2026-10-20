@@ -233,3 +233,11 @@ if(REXGLUE_PLATFORM_SWITCH)
         VERSION "0.0.1"
         ICON "${MK9_NRO_ICON}")
 endif()
+
+# mk9-nx (2026-10-20): Renut's Direct3D-level renderer (reNut by masterspike52, through banjo-nx and sa2-nx 1.0.3;
+# docs/mk9-renut-census.md): no PM4 ring and no EDRAM model, plume's deko3d back end on the Switch. Chosen at boot with
+# sa2_renderer = "renut" (the renderer keeps sa2-nx's key names, as src/me keeps its own).
+option(MK9_RENUT_RENDERER "Link Renut's Direct3D-level renderer (sa2_renderer = renut)" ON)
+if(MK9_RENUT_RENDERER)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/mk9_renut_gpu.cmake")
+endif()

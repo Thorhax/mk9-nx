@@ -120,7 +120,24 @@ State& S() {
     return s;
 }
 
-Handle Proc() { return envGetOwnProcessHandle(); }
+// sa2-nx (2026-10-20): banjo-nx's emulator changes in this file (Proc, EagerViews and their uses), as banjo-nx has them.
+// banjo-nx (2026-10-17): hbloader passes the process handle; an emulator (Ryujinx) runs NROs without a loader, so
+// there is none, and the current-process pseudo-handle stands in for it.
+Handle Proc() {
+  const Handle h = envGetOwnProcessHandle();
+  return h != INVALID_HANDLE ? h : CUR_PROCESS_HANDLE;
+}
+
+/*
+ * banjo-nx (2026-10-17): without a loader (the same test) the views are mapped when a chunk is committed, not on the
+ * first access: an emulator (Ryujinx) does not deliver data aborts to the homebrew's exception handler, so the fault
+ * that RexGmFaultIn answers on a console ends the process there. A console always has the loader's handle and keeps
+ * the lazy views (the process limit on mappable memory, see RexGmCommit).
+ */
+bool EagerViews() {
+  static const bool eager = envGetOwnProcessHandle() == INVALID_HANDLE;
+  return eager;
+}
 
 bool Intersect(size_t a, size_t al, size_t b, size_t bl, size_t* lo, size_t* hi) {
     const size_t l = a > b ? a : b;
@@ -464,6 +481,15 @@ bool RexGmAddView(uint8_t* base, size_t offset, size_t length) {
      * time it is touched.
      */
     s.views.push_back(v);
+    if (EagerViews()) {
+        /* banjo-nx: no faults to map it later (EagerViews): every committed chunk this view covers, now. */
+        const size_t vi = s.views.size() - 1;
+        for (const auto& [off, c] : s.chunks) {
+            size_t lo, hi;
+            if (Intersect(c.offset, c.length, v.offset, v.length, &lo, &hi))
+                MapChunkIntoView(s, vi, c);
+        }
+    }
     return true;
 }
 
@@ -556,6 +582,14 @@ bool RexGmCommit(size_t offset, size_t length, RexGmAccess access) {
         const Chunk c{cur, sz, backing, shadow};
         s.chunks[cur] = c;
         s.committed += sz;
+        if (EagerViews()) {
+            /* banjo-nx: no faults to map it later (EagerViews): into every view that covers it, now. */
+            for (size_t vi = 0; vi < s.views.size(); vi++) {
+                size_t lo, hi;
+                if (Intersect(c.offset, c.length, s.views[vi].offset, s.views[vi].length, &lo, &hi))
+                    MapChunkIntoView(s, vi, c);
+            }
+        }
 
         cur = gap_end;
     }
@@ -629,6 +663,14 @@ bool RexGmProtect(uint8_t* address, size_t length, RexGmAccess access, RexGmAcce
     const size_t end   = AlignUp(static_cast<size_t>(addr - wbase) + length, kPageSize);
 
     if (out_old) *out_old = AccessOf(s, begin);
+
+    /*
+     * banjo-nx (2026-10-17): without a loader (EagerViews: an emulator) the pages keep full access. Ryujinx delivers no
+     * data abort, so a protected page ends the process at its next access instead of being watched; and its
+     * svcSetProcessMemoryPermission throws on the views rather than refusing (the deko3d renderer's first emulator
+     * runs). A console takes the path below.
+     */
+    if (EagerViews()) return true;
 
     const bool must_be = (access == REX_GM_WRITE);
 

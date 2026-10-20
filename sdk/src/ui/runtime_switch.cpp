@@ -97,6 +97,38 @@ u32 __nx_applet_type = AppletType_Application;
 size_t __nx_heap_size = 1024ull * 1024 * 1024;  /* see below */
 
 /*
+ * sa2-nx (2026-10-20, from banjo-nx 2026-10-17): libnx's heap setup (4.12, the same steps), but without a loader the heap is the larger of
+ * __nx_heap_size and all the memory available (what libnx takes when __nx_heap_size is 0). A console always starts the
+ * NRO through hbloader (title takeover or a forwarder), whose heap override is taken as before. An emulator (Ryujinx)
+ * starts it without a loader, and 1 GB ran out (guest backing, thread stacks and the GPU driver's memory share it)
+ * where hbloader would have given about 3 GB.
+ */
+void __libnx_initheap(void) {
+  void* addr = nullptr;
+  size_t size = 0;
+  if (envHasHeapOverride()) {
+    addr = envGetHeapOverrideAddr();
+    size = envGetHeapOverrideSize();
+  } else {
+    u64 available = 0, used = 0;
+    svcGetInfo(&available, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+    svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    if (available > used + 0x200000) size = (available - used - 0x200000) & ~size_t(0x1FFFFF);
+    if (size < __nx_heap_size) size = __nx_heap_size;
+    Result rc = svcSetHeapSize(&addr, size);
+    if (R_FAILED(rc) && size != __nx_heap_size) {
+      size = __nx_heap_size;
+      rc = svcSetHeapSize(&addr, size);
+    }
+    if (R_FAILED(rc)) diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_HeapAllocFailed));
+  }
+  extern char* fake_heap_start;
+  extern char* fake_heap_end;
+  fake_heap_start = static_cast<char*>(addr);
+  fake_heap_end = static_cast<char*>(addr) + size;
+}
+
+/*
  * The exception handler stack is no longer declared here.
  *
  * libnx has a single one for the whole process, and with twenty-odd threads

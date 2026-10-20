@@ -79,6 +79,15 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 #define REX_HAS_SIGEV_THREAD_ID 0
 #endif
 
+// sa2-nx (2026-10-20): see switch_reaper's pool below.
+REXCVAR_DEFINE_INT32(switch_thread_stack_pool, 64, "Threading",
+                     "Switch: guest thread stacks (16 MB each) kept for the next threads instead of going back to the "
+                     "heap. 4 before 2026-10-20: SA2 runs up to 55 guest threads at once at a stage load, so each load "
+                     "took new 16 MB blocks from the heap and gave them back, and the heap fragmented (Ryujinx, 9 "
+                     "minutes of the attract demos: 1.4 GB more taken with 4, 0.76 GB with 24, flat with 64 after the "
+                     "first load, the memory in use the same)")
+    .range(4, 64)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(thread_wait_blocking, true, "Threading",
                     "Event-driven waits: WaitMultiple parks on a wake point instead of polling every 1 ms, "
                     "and alertable waits are woken by the queued APC hint instead of a 1 ms poll slice. "
@@ -871,14 +880,19 @@ bool g_joining = false;             // Loop has taken an item and not joined it 
  * So a big stack is a block of our own, from here or, when none is kept, from the heap. It goes to libnx through
  * pthread_attr_setstack: threadCreate maps it into the stack region without owning it (it carves the TLS and the
  * reent out of its top, as it does with its own allocation) and the join (threadClose) unmaps it. Then the block
- * comes back here instead of to the heap. At most kPoolMaxBlocks blocks and kPoolMaxBytes are kept; any other block
+ * comes back here instead of to the heap. At most PoolBlocks() blocks and PoolMaxBytes() are kept; any other block
  * goes back to the heap.
  */
 // Only the guest threads' 16 MB stacks. The SDK's own threads (4 MB by default, long-lived) stay with libnx as
 // before, and their blocks never take the pool's places.
 constexpr size_t kPoolMinStack = size_t(8) << 20;
-constexpr size_t kPoolMaxBlocks = 4;
-constexpr size_t kPoolMaxBytes = size_t(80) << 20;  // four guest stacks (16 MB each, with their TLS)
+// sa2-nx (2026-10-20): switch_thread_stack_pool blocks (4 before), each a guest stack of 16 MB with its TLS.
+constexpr size_t kPoolMaxBlocks = 64;
+size_t PoolBlocks() {
+  static const size_t blocks = size_t(std::clamp<int32_t>(REXCVAR_GET(switch_thread_stack_pool), 4, 64));
+  return blocks;
+}
+size_t PoolMaxBytes() { return PoolBlocks() * (size_t(20) << 20); }
 struct Stack {
   void* base;
   size_t bytes;
@@ -889,6 +903,8 @@ size_t g_pool_bytes = 0;
 std::atomic<uint64_t> g_stacks_new{0};     // stack blocks taken from the heap
 std::atomic<uint64_t> g_stacks_reused{0};  // ... and from the pool
 std::atomic<uint64_t> g_early_joins{0};    // creations that went through once JoinFinishedNow had joined threads
+std::atomic<uint64_t> g_stacks_live{0};    // sa2-nx (2026-10-20): pooled-size stacks taken and not given back yet
+std::atomic<uint64_t> g_stacks_peak{0};    // ... their most at once
 
 // libnx's linker script (switch.ld): the thread-local segment that threadCreate sets up in every new thread.
 extern "C" char __tls_start[];
@@ -929,17 +945,26 @@ void* PopPooledLocked(size_t bytes) {
 }
 
 // A block for a new thread's stack: a kept one, else a new one from the heap. Null when the heap has none either.
+void NoteStackTaken() {
+  const uint64_t live = g_stacks_live.fetch_add(1, std::memory_order_relaxed) + 1;
+  uint64_t peak = g_stacks_peak.load(std::memory_order_relaxed);
+  while (live > peak && !g_stacks_peak.compare_exchange_weak(peak, live, std::memory_order_relaxed)) {
+  }
+}
+
 void* TakeStack(size_t bytes) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (void* const base = PopPooledLocked(bytes)) {
       g_stacks_reused.fetch_add(1, std::memory_order_relaxed);
+      NoteStackTaken();
       return base;
     }
   }
   void* const base = memalign(0x1000, bytes);
   if (base != nullptr) {
     g_stacks_new.fetch_add(1, std::memory_order_relaxed);
+    NoteStackTaken();
   }
   return base;
 }
@@ -950,9 +975,10 @@ void GiveStack(void* base, size_t bytes) {
   if (base == nullptr) {
     return;
   }
+  g_stacks_live.fetch_sub(1, std::memory_order_relaxed);
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_pool_count < kPoolMaxBlocks && g_pool_bytes + bytes <= kPoolMaxBytes) {
+    if (g_pool_count < PoolBlocks() && g_pool_bytes + bytes <= PoolMaxBytes()) {
       g_pool[g_pool_count++] = {base, bytes};
       g_pool_bytes += bytes;
       g_drained.notify_all();  // a creation may be waiting for one (JoinFinishedNow)
@@ -991,10 +1017,11 @@ void* Loop(void*) {
         kept_bytes = g_pool_bytes;
       }
       REXSYS_INFO("[threads] {} finished host threads released (kernel slot and stack); stacks: {} from the heap, "
-                  "{} reused, {} kept ({} MB); {} creations helped by joining finished threads early",
+                  "{} reused, {} kept ({} MB, at most {}), {} at most in use at once; {} creations helped by "
+                  "joining finished threads early",
                   reaped, g_stacks_new.load(std::memory_order_relaxed),
-                  g_stacks_reused.load(std::memory_order_relaxed), kept, kept_bytes >> 20,
-                  g_early_joins.load(std::memory_order_relaxed));
+                  g_stacks_reused.load(std::memory_order_relaxed), kept, kept_bytes >> 20, PoolBlocks(),
+                  g_stacks_peak.load(std::memory_order_relaxed), g_early_joins.load(std::memory_order_relaxed));
     }
     lock.lock();
     g_joining = false;
@@ -1036,6 +1063,7 @@ void* JoinFinishedNow(size_t bytes, std::chrono::milliseconds timeout, size_t* p
   });
   if (stack != nullptr) {
     g_stacks_reused.fetch_add(1, std::memory_order_relaxed);
+    NoteStackTaken();
   }
   return stack;
 }

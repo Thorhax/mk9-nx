@@ -60,6 +60,23 @@ inline T GuestPtr(u8* base, u32 guest_address) noexcept {
 
 class Memory;
 
+// mk9-nx (2026-10-20): the store cards' interface from sa2-nx 1.0.3 (banjo-nx's SDK of 2026-10-19), which Renut's
+// renderer calls. MK9's generated code marks no cards (tools/store_cards.py is not run) and Memory::Initialize keeps no
+// card table: g_store_cards stays nullptr, so these do nothing and Renut hashes its cached copies (g_banjo_store_cards
+// false, renut_engine/sa2_compat/sa2_compat.cpp).
+extern u8* g_store_cards;
+
+inline void MarkStoreCardsAt(u8* cards, u32 guest_address, u32 length) noexcept {
+  if (!cards || !length) return;
+  const uint64_t end = uint64_t(guest_address) + length - 1;
+  const u32 last = end > 0xFFFFFFFFull ? 0xFFFFFu : u32(end >> 12);
+  for (u32 page = guest_address >> 12; page <= last; ++page) cards[page] = 0;
+}
+
+inline void MarkStoreCards(u32 guest_address, u32 length) noexcept {
+  MarkStoreCardsAt(g_store_cards, guest_address, length);
+}
+
 enum SystemHeapFlag : uint32_t {
   kSystemHeapVirtual = 1 << 0,
   kSystemHeapPhysical = 1 << 1,

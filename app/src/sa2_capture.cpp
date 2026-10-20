@@ -76,6 +76,27 @@ std::atomic<bool> g_lockstep{false};
 std::atomic<uint64_t> g_recorded{0};
 std::atomic<uint64_t> g_wait_timeouts{0};
 
+// Renut's lockstep (RenutLockstepFrame): one frame handed from the Swap hook to the recorder.
+std::atomic<bool> g_renut_lockstep{false};
+std::mutex g_renut_mutex;
+std::condition_variable g_renut_cv;
+bool g_renut_full = false;
+bool g_renut_ok = false;
+uint64_t g_renut_label = 0;
+rex::ui::RawImage g_renut_image;
+
+// Recorder thread: the next frame of Renut's lockstep (false after 100 ms without one).
+bool TakeRenutFrame(rex::ui::RawImage& image, uint64_t& label, bool& ok) {
+  std::unique_lock lock(g_renut_mutex);
+  if (!g_renut_cv.wait_for(lock, std::chrono::milliseconds(100), [] { return g_renut_full; })) return false;
+  image = std::move(g_renut_image);
+  label = g_renut_label;
+  ok = g_renut_ok;
+  g_renut_full = false;
+  g_renut_cv.notify_all();
+  return true;
+}
+
 // Ring thread, right after presenting swap `presented`: wait until the recorder has taken it (at most 1 s).
 void OnPresent(uint64_t presented) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -134,7 +155,8 @@ void Resample(const rex::ui::RawImage& in, uint32_t width, uint32_t height, rex:
   }
 }
 
-void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int frame_count) {
+void Record(std::function<bool(rex::ui::RawImage&)> grab, int start_s, int frame_count, bool allow_lockstep,
+            bool renut) {
   {
     std::unique_lock lock(g_mutex);
     if (g_cv.wait_for(lock, std::chrono::seconds(start_s), [] { return g_stop; })) {
@@ -170,11 +192,15 @@ void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int
   uint32_t width = 0, height = 0;
   const auto started = std::chrono::steady_clock::now();
   uint64_t last = g_sa2_game_frames.load(std::memory_order_relaxed);
-  const bool lockstep = REXCVAR_GET(sa2_video_lockstep) && every == 1;
+  const bool lockstep = allow_lockstep && REXCVAR_GET(sa2_video_lockstep) && every == 1;
   const uint64_t keep_every = uint64_t(std::max(1, REXCVAR_GET(sa2_video_lockstep_every)));
   uint64_t wait_timeouts = 0;
   uint64_t last_swap = me::native::PresentedSwaps();
   const uint64_t first_swap = last_swap + 1;
+  // Renut's renderer: its Swap hook hands every frame over (RenutLockstepFrame); labels are game frames.
+  const bool renut_lockstep = renut && REXCVAR_GET(sa2_video_lockstep) && every == 1;
+  uint64_t renut_first = 0;
+  if (renut_lockstep) g_renut_lockstep.store(true, std::memory_order_release);
   if (lockstep) {
     // From here the ring waits after each presented swap until this thread has taken it (OnPresent): every frame is
     // taken, at the swap that shows it, however loaded the PC is. Labels are presented-swap numbers (the same frame
@@ -189,7 +215,13 @@ void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int
                        : std::string());
   while (written < frame_count && !StopRequested()) {
     uint64_t now = 0, label = 0;
-    if (lockstep) {
+    rex::ui::RawImage image;
+    if (renut_lockstep) {
+      bool ok = false;
+      if (!TakeRenutFrame(image, now, ok)) continue;
+      if (!renut_first) renut_first = now;
+      if (!ok || !image.width || !image.height || (keep_every > 1 && (now - renut_first) % keep_every)) continue;
+    } else if (lockstep) {
       const uint64_t swap = me::native::PresentedSwaps();
       if (swap == last_swap) {
         std::this_thread::sleep_for(std::chrono::microseconds(200));
@@ -215,9 +247,7 @@ void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int
       last = now;
       std::this_thread::sleep_for(std::chrono::milliseconds(4));
     }
-    rex::ui::Presenter* presenter = get_presenter ? get_presenter() : nullptr;
-    rex::ui::RawImage image;
-    if (!presenter || !presenter->CaptureGuestOutput(image) || !image.width || !image.height) {
+    if (!renut_lockstep && (!grab || !grab(image) || !image.width || !image.height)) {
       if (lockstep) g_recorded.store(now, std::memory_order_release);  // release the ring; this swap is lost
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
       continue;
@@ -272,7 +302,9 @@ void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int
       const uint64_t h = XXH3_64bits(full.data(), full.size());
       hash_file.write(reinterpret_cast<const char*>(&h), sizeof(h));
     }
-    if (lockstep) {
+    if (renut_lockstep) {
+      label = now;
+    } else if (lockstep) {
       label = now;
       g_recorded.store(now, std::memory_order_release);  // the ring may present the next swap
     } else {
@@ -283,6 +315,12 @@ void Record(std::function<rex::ui::Presenter*()> get_presenter, int start_s, int
     if (written % 600 == 0) {
       REXLOG_INFO("[capture] {} / {} frames", written, frame_count);
     }
+  }
+  if (renut_lockstep) {
+    g_renut_lockstep.store(false, std::memory_order_release);
+    std::lock_guard lock(g_renut_mutex);
+    g_renut_full = false;
+    g_renut_cv.notify_all();
   }
   if (lockstep) {
     g_lockstep.store(false, std::memory_order_release);
@@ -317,8 +355,40 @@ void Start(std::function<rex::ui::Presenter*()> get_presenter) {
     std::lock_guard lock(g_mutex);
     g_stop = false;
   }
-  g_thread = std::thread(Record, std::move(get_presenter), int(REXCVAR_GET(sa2_video_s)),
-                         int(REXCVAR_GET(sa2_video_frames)));
+  auto grab = [get_presenter = std::move(get_presenter)](rex::ui::RawImage& image) {
+    rex::ui::Presenter* presenter = get_presenter ? get_presenter() : nullptr;
+    return presenter && presenter->CaptureGuestOutput(image);
+  };
+  g_thread = std::thread(Record, std::move(grab), int(REXCVAR_GET(sa2_video_s)), int(REXCVAR_GET(sa2_video_frames)),
+                         true, false);
+}
+
+void StartWithSource(std::function<bool(rex::ui::RawImage&)> grab) {
+  if (REXCVAR_GET(sa2_video_s) <= 0 || g_thread.joinable()) {
+    return;
+  }
+  {
+    std::lock_guard lock(g_mutex);
+    g_stop = false;
+  }
+  g_thread = std::thread(Record, std::move(grab), int(REXCVAR_GET(sa2_video_s)), int(REXCVAR_GET(sa2_video_frames)),
+                         false, true);
+}
+
+bool RenutLockstepOn() { return g_renut_lockstep.load(std::memory_order_acquire); }
+
+void RenutLockstepFrame(uint64_t game_frame, const rex::ui::RawImage* image) {
+  std::unique_lock lock(g_renut_mutex);
+  // The previous frame first (the recorder takes one at a time), then this one, then wait until it is taken.
+  const auto taken = [] { return !g_renut_full || !g_renut_lockstep.load(std::memory_order_acquire); };
+  g_renut_cv.wait_for(lock, std::chrono::seconds(5), taken);
+  if (!g_renut_lockstep.load(std::memory_order_acquire)) return;
+  g_renut_ok = image != nullptr;
+  if (image) g_renut_image = *image;
+  g_renut_label = game_frame;
+  g_renut_full = true;
+  g_renut_cv.notify_all();
+  g_renut_cv.wait_for(lock, std::chrono::seconds(5), taken);
 }
 
 void Stop() {

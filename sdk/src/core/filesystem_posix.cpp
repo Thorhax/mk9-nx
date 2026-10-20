@@ -123,6 +123,17 @@ std::filesystem::path GetExecutablePath() {
     }
     return std::filesystem::path(path);
   }
+#if defined(REX_SWITCH_FALLBACK_EXE)
+  // sa2-nx (2026-10-20, from banjo-nx): an emulator (Ryujinx) starts NROs without argv, so the app would not know its
+  // folder (no toml, logs or game_root next to it). The app names its usual place on the SD (the root form, as above),
+  // used when it is there. hbloader on a console always passes argv[0].
+  {
+    struct stat st;
+    if (stat(REX_SWITCH_FALLBACK_EXE, &st) == 0) {
+      return std::filesystem::path(REX_SWITCH_FALLBACK_EXE);
+    }
+  }
+#endif
   return {};
 #else
   char buff[FILENAME_MAX] = "";

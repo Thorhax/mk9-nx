@@ -45,6 +45,7 @@
 #include <xxhash.h>
 
 #include "me/me_native_system.h"
+#include "renut_engine/gpu/sa2_renut_yield.h"  // sa2_renderer = "renut"
 
 REXCVAR_DEFINE_BOOL(mk9_dump_shaders, false, "MK9",
                     "Write every shader container the game creates to shaders/ next to the executable "
@@ -107,6 +108,7 @@ void DumpShaderBlob(const uint8_t* base, uint32_t blob_address) {
 // Draw-time shader load (called by every Draw*'s state flush).
 REX_EXTERN(__imp__sub_82BFEEE8);
 REX_HOOK_RAW(sub_82BFEEE8) {
+  SA2_RENUT_YIELD(sub_82BFEEE8)
   const uint32_t device = ctx.r3.u32;
   static std::atomic<bool> logged{false};
   if (!logged.exchange(true, std::memory_order_relaxed)) {
@@ -122,19 +124,23 @@ REX_HOOK_RAW(sub_82BFEEE8) {
   __imp__sub_82BFEEE8(ctx, base);
 }
 
-#define MK9_DRAW_HOOK(addr)                                                                                \
+// mk9-nx (2026-10-20): with sa2_renderer = "renut", Renut's side at the addresses it hooks too (_SHARED), the game's
+// original at the others. Which is which, from the Renut census (docs/mk9-renut-census.md): BeginVertices,
+// DrawVertices, DrawIndexedVertices, BeginIndexedVertices and the two tessellated draws.
+#define MK9_DRAW_HOOK(addr, yield)                                                                         \
   REX_EXTERN(__imp__sub_##addr);                                                                          \
   REX_HOOK_RAW(sub_##addr) {                                                                              \
+    yield(sub_##addr)                                                                                     \
     me::native::NoteDrawCall(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, nullptr); \
     __imp__sub_##addr(ctx, base);                                                                         \
   }
 
-MK9_DRAW_HOOK(82BEFEF8)  // DRAW_INDX, auto index
-MK9_DRAW_HOOK(82BF09E0)  // DRAW_INDX, auto index
-MK9_DRAW_HOOK(82BF1270)  // DRAW_INDX, auto index (no direct caller: reached by pointer)
-MK9_DRAW_HOOK(82BF0400)  // DRAW_INDX, indexed
-MK9_DRAW_HOOK(82BF0DF8)  // DRAW_INDX, indexed
-MK9_DRAW_HOOK(82BF1710)  // DRAW_INDX, indexed
+MK9_DRAW_HOOK(82BEFEF8, SA2_RENUT_YIELD_SHARED)  // DRAW_INDX, auto index (BeginVertices)
+MK9_DRAW_HOOK(82BF09E0, SA2_RENUT_YIELD_SHARED)  // DRAW_INDX, auto index (DrawVertices)
+MK9_DRAW_HOOK(82BF1270, SA2_RENUT_YIELD)  // DRAW_INDX, auto index (no direct caller: reached by pointer; tessellated?)
+MK9_DRAW_HOOK(82BF0400, SA2_RENUT_YIELD)  // DRAW_INDX, indexed (BeginIndexedVertices: Renut hooks DrawIndexedVerticesUP)
+MK9_DRAW_HOOK(82BF0DF8, SA2_RENUT_YIELD_SHARED)  // DRAW_INDX, indexed (DrawIndexedVertices)
+MK9_DRAW_HOOK(82BF1710, SA2_RENUT_YIELD)  // DRAW_INDX, indexed (tessellated?)
 
 REX_EXTERN(__imp__sub_82BE9B48);
 REX_HOOK_RAW(sub_82BE9B48) {  // XDK shader container parse helper (r3 = the container blob)

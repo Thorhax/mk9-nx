@@ -16,6 +16,7 @@
 #include <rex/logging.h>
 
 #include "sa2_capture.h"
+#include "renut_engine/gpu/sa2_renut_yield.h"
 
 REXCVAR_DEFINE_BOOL(mk9_fps_log, true, "MK9", "Log the game's presented frames per second every 5 s");
 REXCVAR_DEFINE_INT32(mk9_hitch_log_ms, 0, "MK9", "Frames longer than this (ms) get a \"[hitch]\" line. 0 = off");
@@ -64,9 +65,18 @@ void Report() {
 
 extern "C" REX_FUNC(__imp__sub_82BF6D58);
 REX_HOOK_RAW(sub_82BF6D58) {
-  sa2::capture::BeforeFlip();  // sa2_video_lockstep: the recorder takes every frame (sa2-nx's recorder)
-  __imp__sub_82BF6D58(ctx, base);
+#if SA2_RENUT_RENDERER
+  // sa2_renderer = "renut": Renut's Swap (the frame goes to its render thread; its own lockstep captures). It counts
+  // g_sa2_game_frames itself.
+  if (::banjo::renut_gpu::Active()) {
+    renut_native_sub_82BF6D58(ctx, base);
+  } else
+#endif
+  {
+    sa2::capture::BeforeFlip();  // sa2_video_lockstep: the recorder takes every frame (sa2-nx's recorder)
+    __imp__sub_82BF6D58(ctx, base);
+    g_sa2_game_frames.fetch_add(1, std::memory_order_relaxed);
+  }
   g_mk9_game_frames.fetch_add(1, std::memory_order_relaxed);
-  g_sa2_game_frames.fetch_add(1, std::memory_order_relaxed);
   if (REXCVAR_GET(mk9_fps_log)) Report();
 }

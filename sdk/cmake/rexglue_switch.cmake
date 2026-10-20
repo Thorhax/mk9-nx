@@ -19,6 +19,13 @@ if(NOT EXISTS "${REXGLUE_SWITCH_NVK_SDK}/lib/libvulkan.a")
         "(no lib/libvulkan.a under '${REXGLUE_SWITCH_NVK_SDK}')")
 endif()
 
+# sa2-nx (2026-10-20): a build whose renderer does not use Vulkan (SA2's Renut on deko3d) can leave the driver out.
+# Only four of its symbols are linked by name (vkGetInstanceProcAddr / vkDestroyInstance in ui/vulkan/vulkan_instance.cpp,
+# the ICD pair plume's Vulkan back end starts from); src/ui/switch_no_vulkan.c answers them with "no driver", so a
+# Vulkan instance cannot be created and libvulkan.a is not linked. The SDK's headers path stays (plume and the SDK's
+# Vulkan sources still compile against it).
+option(REXGLUE_SWITCH_NO_NVK "Switch: do not link Mesa's NVK driver (a renderer without Vulkan; no Vulkan presenter)" OFF)
+
 # Static NVK. Not find_package(Vulkan): the Mesa SDK's config requires libelf,
 # which devkitPro does not package. switch_elf_stubs.c satisfies the linker
 # instead; the NVIDIA CUBIN parser that uses libelf never runs on Switch.
@@ -36,10 +43,14 @@ if(NOT TARGET rex::nvk)
     # silently linked it instead of REXGLUE_SWITCH_NVK_SDK's (nfsmw, Mesa 26.2.2), so the renderer's driver paths
     # (patch_nvk_set4, the nvk_switch_draw contract) stayed off. Found by banjo-nx; check the ELF with
     # `strings -n 8 out/nx/sa2 | grep -m1 "Mesa 26"`.
+    if(REXGLUE_SWITCH_NO_NVK)
+        target_link_libraries(rexglue_switch_nvk INTERFACE zstd z nx stdc++ m)
+    else()
     target_link_libraries(rexglue_switch_nvk INTERFACE
         "${REXGLUE_SWITCH_NVK_SDK}/lib/libvulkan.a" expat zstd z nx
         "${REXGLUE_SWITCH_NVK_SDK}/lib/libvulkan.a" expat zstd z nx
         stdc++ m)
+    endif()
     target_link_options(rexglue_switch_nvk INTERFACE -pthread)
 endif()
 
@@ -53,9 +64,15 @@ endif()
 #   switch_crash_hooks.c  abort()/exit() reports and stderr to the SD; abort
 #                       must be defined before libc.a is searched
 if(NOT TARGET rexglue_switch_startup)
+    # sa2-nx: without the driver, its four entry points instead of the libelf stubs it needed.
+    if(REXGLUE_SWITCH_NO_NVK)
+        set(_rexglue_switch_driver_stubs "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_no_vulkan.c")
+    else()
+        set(_rexglue_switch_driver_stubs "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_elf_stubs.c")
+    endif()
     add_library(rexglue_switch_startup OBJECT
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/runtime_switch.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_elf_stubs.c"
+        "${_rexglue_switch_driver_stubs}"
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_crash_hooks.c"
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_perf.cpp"
         # FPS and resolution for the console overlays (SaltyNX) and Reverse-NX reading.

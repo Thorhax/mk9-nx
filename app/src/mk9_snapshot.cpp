@@ -54,7 +54,7 @@ bool WritePpm(const std::filesystem::path& path, const rex::ui::RawImage& image)
   return true;
 }
 
-void Run(std::function<rex::ui::Presenter*()> get_presenter, std::vector<double> times) {
+void Run(std::function<bool(rex::ui::RawImage&)> grab, std::vector<double> times) {
   const auto start = std::chrono::steady_clock::now();
   const auto folder = rex::filesystem::GetExecutableFolder() / "captures";
   std::error_code ec;
@@ -66,9 +66,8 @@ void Run(std::function<rex::ui::Presenter*()> get_presenter, std::vector<double>
                                     std::chrono::duration<double>(s));
       if (g_cv.wait_until(lock, when, [] { return g_stop; })) return;
     }
-    rex::ui::Presenter* presenter = get_presenter ? get_presenter() : nullptr;
     rex::ui::RawImage image;
-    if (!presenter || !presenter->CaptureGuestOutput(image) || !image.width || !image.height) {
+    if (!grab || !grab(image) || !image.width || !image.height) {
       REXLOG_WARN("[snapshot] {} s: no guest output yet", s);
       continue;
     }
@@ -84,6 +83,13 @@ void Run(std::function<rex::ui::Presenter*()> get_presenter, std::vector<double>
 }  // namespace
 
 void Start(std::function<rex::ui::Presenter*()> get_presenter) {
+  StartWithSource([get_presenter = std::move(get_presenter)](rex::ui::RawImage& image) {
+    rex::ui::Presenter* presenter = get_presenter ? get_presenter() : nullptr;
+    return presenter && presenter->CaptureGuestOutput(image);
+  });
+}
+
+void StartWithSource(std::function<bool(rex::ui::RawImage&)> grab) {
   const std::string spec = REXCVAR_GET(mk9_snapshot_s);
   if (spec.empty()) return;
   std::vector<double> times;
@@ -105,7 +111,7 @@ void Start(std::function<rex::ui::Presenter*()> get_presenter) {
   std::sort(times.begin(), times.end());
   if (times.empty()) return;
   g_stop = false;
-  g_thread = std::thread(Run, std::move(get_presenter), std::move(times));
+  g_thread = std::thread(Run, std::move(grab), std::move(times));
 }
 
 void Stop() {

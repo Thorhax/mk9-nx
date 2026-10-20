@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <system_error>
 
 #include <rex/cvar.h>
@@ -18,6 +20,14 @@
 #include "sa2_capture.h"
 #include "mk9_script_input.h"
 #include "mk9_snapshot.h"
+
+// mk9-nx (2026-10-20): Renut's Direct3D-level renderer (src/renut_engine/gpu, from reNut by masterspike52 through
+// banjo-nx and sa2-nx), chosen at boot with sa2_renderer = "renut" (docs/mk9-renut-census.md).
+#if SA2_RENUT_RENDERER
+#include "renut_engine/gpu/banjo_renut_select.h"
+#include "renut_engine/gpu/overlay/app_integration.h"
+#include "renut_engine/gpu/banjo_renut_capture.h"
+#endif
 
 #if defined(MK9_BUILTIN_CONFIG)
 #include "mk9_builtin_config.h"  // generated from app/mk9_switch_defaults.toml (CMake)
@@ -94,11 +104,37 @@ class Mk9App : public rex::ReXApp {
   void OnPreSetup(rex::RuntimeConfig& config) override {
     config.input_factory = mk9::script_input::CreateInputSystem;
     sa2::enh::ApplyGpuBoost();
+#if SA2_RENUT_RENDERER
+    if (banjo::renut_gpu::Active()) {
+      // No SDK graphics system and no GPU plugin: the renderer is the app's (its own window swapchain and thread).
+      renut::gpu::ConfigureRuntime(config);
+      REXLOG_INFO("graphics: Renut's Direct3D-level renderer (sa2_renderer = renut: no PM4 ring, no EDRAM)");
+      return;
+    }
+#endif
     if (me::native::Enabled()) {
       config.graphics = me::native::CreateGraphicsSystem();
       REXLOG_INFO("graphics: native Vulkan renderer (PM4 ring)");
     }
   }
+
+#if SA2_RENUT_RENDERER
+  // Renut's renderer draws the SDK's menus through its own plume drawer, resizes its swapchain itself, and starts once
+  // the window exists (here, before the game: the paths are final). As sa2-nx 1.0.3's Sa2App.
+  std::unique_ptr<rex::ui::ImmediateDrawer> OnCreateImmediateDrawer() override {
+    if (banjo::renut_gpu::Active()) return renut::gpu::CreateOverlayDrawer();
+    return rex::ReXApp::OnCreateImmediateDrawer();
+  }
+  void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
+    rex::ReXApp::OnWindowPixelSizeChanged(pixel_width, pixel_height);
+    if (banjo::renut_gpu::Active()) renut::gpu::OnWindowResized();
+  }
+  std::optional<rex::PathConfig> OnFinalizePaths(const rex::PathConfig& defaults,
+                                                 std::function<void(rex::PathConfig)> resume) override {
+    if (banjo::renut_gpu::Active()) renut::gpu::StartRenderer(app_context(), [this] { return imgui_drawer(); });
+    return rex::ReXApp::OnFinalizePaths(defaults, std::move(resume));
+  }
+#endif
 
   // Test snapshots of the game image (mk9_snapshot_s), read from the presenter's guest output.
   void OnPostSetup() override {
@@ -106,6 +142,14 @@ class Mk9App : public rex::ReXApp {
     sa2::enh::StartReport();
     // Short video recordings of the game image (sa2_video_s; sa2-nx's recorder, lockstep with vblank_per_swap): raw
     // frames + a per-frame XXH3 of the full-resolution image, to compare two runs frame for frame.
+#if SA2_RENUT_RENDERER
+    if (banjo::renut_gpu::Active()) {
+      auto grab = [](rex::ui::RawImage& image) { return renut::gpu::CaptureFrame(image); };
+      sa2::capture::StartWithSource(grab);
+      mk9::snapshot::StartWithSource(grab);
+      return;
+    }
+#endif
     sa2::capture::Start([this]() -> rex::ui::Presenter* {
       const auto* rt = runtime();
       const auto* graphics = rt ? rt->graphics_system() : nullptr;
@@ -119,6 +163,9 @@ class Mk9App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+#if SA2_RENUT_RENDERER
+    if (banjo::renut_gpu::Active()) renut::gpu::ShutdownRenderer();
+#endif
     sa2::capture::Stop();
     mk9::snapshot::Stop();
   }

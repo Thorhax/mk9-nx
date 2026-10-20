@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
@@ -298,6 +299,35 @@ bool RexSwitchSetCurrentThreadCore(int core) {
     return false;  // that core is not this process's: do not force it
   }
   return R_SUCCEEDED(svcSetThreadCoreMask(h, core, mask));
+}
+
+bool RexSwitchSetThreadMaskOf(void* native_handle, int preferred, unsigned long long mask) {
+  pthread_t thread;
+  static_assert(sizeof(thread) == sizeof(native_handle));
+  std::memcpy(&thread, &native_handle, sizeof(thread));
+  const RexSwitchHandle h = RexSwitchHandleFor(thread);
+  const u64 m = u64(mask) & 0x7;
+  if (h == REX_SWITCH_INVALID_HANDLE || m == 0 || preferred < 0 || !(m & (u64(1) << preferred))) return false;
+  return R_SUCCEEDED(svcSetThreadCoreMask(h, preferred, m));
+}
+
+bool RexSwitchSetCurrentThreadMask(int preferred, unsigned long long mask) {
+  Thread* yo = threadGetSelf();
+  Handle h = (yo != nullptr) ? yo->handle : CUR_THREAD_HANDLE;
+  s32 current_preferred = 0;
+  u64 current = 0;
+  if (R_FAILED(svcGetThreadCoreMask(&current_preferred, &current, h))) {
+    if (h == CUR_THREAD_HANDLE ||
+        R_FAILED(svcGetThreadCoreMask(&current_preferred, &current, CUR_THREAD_HANDLE))) {
+      return false;
+    }
+    h = CUR_THREAD_HANDLE;
+  }
+  const u64 m = u64(mask) & 0x7;  // the process's three cores
+  if (m == 0 || preferred < 0 || !(m & (u64(1) << preferred))) {
+    return false;
+  }
+  return R_SUCCEEDED(svcSetThreadCoreMask(h, preferred, m));
 }
 
 /*

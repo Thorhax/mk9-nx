@@ -1,3 +1,4 @@
+#include <set>
 #include "shader_recompiler.h"
 #include "shader_common.h"
 #include <stdexcept>
@@ -1956,6 +1957,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             indexedFetches = std::move(split.indexed);
         }
         const uint32_t elementCount = linkByRegister ? uint32_t(fetchesByRegister.size()) : uint32_t(vertexShader->vertexElementCount);
+        // mk9-nx: an element table may list the same usage/index at more than one fetch address (Mortal Kombat
+        // Komplete Edition: 191 vertex shaders fetch their inputs again in a second code path). One input per
+        // usage/index; every address still maps to it, so all its fetches read the same variable.
+        std::set<std::pair<uint32_t, uint32_t>> declaredInputs;
         for (uint32_t i = 0; i < elementCount; i++)
         {
             union
@@ -1973,6 +1978,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             }
             else
                 value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + i];
+
+            if (!declaredInputs.emplace(uint32_t(vertexElement.usage), uint32_t(vertexElement.usageIndex)).second)
+            {
+                vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+                continue;
+            }
 
             const char* usageType = USAGE_TYPES[uint32_t(vertexElement.usage)];
 

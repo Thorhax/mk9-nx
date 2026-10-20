@@ -172,7 +172,12 @@ int main(int argc, char** argv) {
       off = data - 1;
     }
     // Scan the uncompressed data (and the raw file, for uncompressed packages).
+    // mk9-nx: the raw file only when no chunk was decompressed: in a compressed package a container magic can sit
+    // among the LZO literals with compressed bytes after it (2,088 such "containers" in MK9's packages, all failing
+    // translation, none ever loaded by the game).
+    const bool raw_too = plain.empty();
     for (const std::vector<uint8_t>* buf : {&plain, &d}) {
+      if (buf == &d && !raw_too) continue;
       const auto& b = *buf;
       for (size_t i = 0; i + 24 <= b.size(); ++i) {
         const uint32_t sig = BE(&b[i]);

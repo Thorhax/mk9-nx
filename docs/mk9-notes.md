@@ -166,3 +166,22 @@ PS) covering 19,829 distinct microcodes; **every one of the 4,531 microcodes of 
 the shader package can be made from the game files alone, as usf4-nx's browser installer does for USF4. What the
 scan cannot have are the containers Direct3D rewrites at bind time (40 of the 83 `missing/` ones are in the scan by
 microcode): those still come from `sa2_shader_misses` runs (or repairs of the variants).
+
+### Full shader package (2026-10-20)
+
+- `ue3_shader_scan` also scanned the raw (still compressed) file of every package and took a container magic that sits
+  among LZO literals, with compressed bytes after it, for a container: 2,088 junk entries, all crashing XenosRecomp,
+  none ever loaded by the game. The raw file is now scanned only for packages without compressed chunks: 19,005
+  distinct containers, exactly the 2,088 fewer.
+- XenosRecomp: 191 vertex shaders (77 of them created by the game in a run) list the same usage/index at two fetch
+  addresses (their inputs are fetched again in a second code path); the translator declared each input twice and DXC
+  failed (`redefinition of parameter 'iPosition0'`). Now one input per usage/index, every fetch address mapped to it
+  (`shaders/XenosRecomp/shader_recompiler.cpp`). All 191 compile.
+- `tools/build_shader_library.sh`: `SHADER_SPIRV_CACHE=<folder>` reuses compiled SPIR-V by container hash (a round
+  takes ~6 min instead of ~45 for 24k containers).
+- Package = runtime dump + scan + rounds 1-2 (`missing/` + wrapped): **19,071 shaders, 777 MB** (+33 MB index; the
+  library keeps only the index in memory and reads SPIR-V lazily). Run to a fight (Scorpion vs Quan Chi, street
+  stage): **unidentified loads: VS 0, PS 0, immediate 0**; 233 objects seen; no new discovery; 7 more rewritten
+  containers in `missing/`. The street stage, both fighters, ROUND 1 and the HUD are drawn right. 21-22 fps on the GTX
+  960M (GPU-bound laptop; usf4-nx's PC fights on this machine were also ~10-13 fps GPU-bound with the native
+  renderer, while its console build reached 60).

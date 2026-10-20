@@ -24,6 +24,10 @@ else
   DXC=${DXC:-/c/devkitPro/UnleashedRecomp-NX/tools/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe}
 fi
 JOBS=${JOBS:-8}
+# mk9-nx: SHADER_SPIRV_CACHE=<folder> keeps every compiled vs_/ps_<hash>.spv there and reuses it on the next build
+# (files are named by the container's content hash, so the same name is the same container). Only valid while the
+# translator and DXC flags stay the same: empty the folder after changing either.
+SPIRV_CACHE=${SHADER_SPIRV_CACHE:-}
 [ $# -ge 1 ] || { echo "usage: $0 <dump folder> [...]"; exit 1; }
 rm -rf "$OUT"; mkdir -p "$OUT/in" "$OUT/hlsl" "$OUT/spirv" "$OUT/bin" "$OUT/tmp"
 
@@ -66,6 +70,7 @@ echo "   $(ls "$OUT/in" | wc -l) containers"
 echo "== XenosRecomp (one process per container, so one crash does not stop the rest)"
 translate() {
   local f=$1 b; b=$(basename "$f" .bin)
+  if [ -n "$SPIRV_CACHE" ] && [ -f "$SPIRV_CACHE/$b.spv" ]; then cp "$SPIRV_CACHE/$b.spv" "$OUT/spirv/"; return; fi
   local t="$OUT/tmp/$b"; mkdir -p "$t/i"; cp "$f" "$t/i/"
   # A time limit per container, so one shader that hangs the translator cannot stall the whole build.
   if timeout 120 "$OUT/bin/xenos_hlsl.exe" "$t/i" "$t/o" "$XENOS/shader_common.h" > "$t/log.txt" 2>&1 && [ -f "$t/o/$b.hlsl" ]; then
@@ -87,6 +92,8 @@ compile() {
 }
 parallel compile "$OUT"/hlsl/*.hlsl
 echo "   $(ls "$OUT"/spirv/*.spv 2>/dev/null | wc -l) compiled, $(ls "$OUT"/spirv/*.err 2>/dev/null | wc -l) failed"
+
+if [ -n "$SPIRV_CACHE" ]; then mkdir -p "$SPIRV_CACHE"; cp -n "$OUT"/spirv/*.spv "$SPIRV_CACHE/" 2>/dev/null; fi
 
 echo "== pack (only containers that compiled)"
 mkdir -p "$OUT/in_ok"

@@ -42,9 +42,14 @@ namespace {
  * Not a hot path: it is touched when threads are created and destroyed, never
  * per frame. A plain mutex is more than enough.
  */
+struct Entry {
+  RexSwitchHandle handle;
+  char name[40];  // mk9-nx: for RexSwitchListThreads (the hang dump); empty when the thread gave none
+};
+
 struct Register {
   std::mutex m;
-  std::unordered_map<uintptr_t, RexSwitchHandle> map;
+  std::unordered_map<uintptr_t, Entry> map;
 };
 
 Register& register_value() {
@@ -64,7 +69,29 @@ extern "C" {
 void RexSwitchRegisterCurrentThread(void) {
   auto& r = register_value();
   std::lock_guard<std::mutex> lock(r.m);
-  r.map[reinterpret_cast<uintptr_t>(pthread_self())] = threadGetCurHandle();
+  r.map[reinterpret_cast<uintptr_t>(pthread_self())].handle = threadGetCurHandle();
+}
+
+/* mk9-nx (2026-10-21): registers the current thread with a name, so the hang dump can say whose stack it is. */
+void RexSwitchRegisterCurrentThreadNamed(const char* name) {
+  auto& r = register_value();
+  std::lock_guard<std::mutex> lock(r.m);
+  Entry& e = r.map[reinterpret_cast<uintptr_t>(pthread_self())];
+  e.handle = threadGetCurHandle();
+  std::snprintf(e.name, sizeof(e.name), "%s", name ? name : "");
+}
+
+size_t RexSwitchListThreads(RexSwitchHandle* handles, char (*names)[40], size_t max) {
+  auto& r = register_value();
+  std::lock_guard<std::mutex> lock(r.m);
+  size_t n = 0;
+  for (const auto& [thread, e] : r.map) {
+    if (n == max) break;
+    handles[n] = e.handle;
+    std::memcpy(names[n], e.name, sizeof(e.name));
+    ++n;
+  }
+  return n;
 }
 
 void RexSwitchUnregisterCurrentThread(void) {
@@ -80,7 +107,7 @@ RexSwitchHandle RexSwitchHandleFor(pthread_t thread) {
   auto& r = register_value();
   std::lock_guard<std::mutex> lock(r.m);
   auto it = r.map.find(reinterpret_cast<uintptr_t>(thread));
-  return it == r.map.end() ? REX_SWITCH_INVALID_HANDLE : it->second;
+  return it == r.map.end() ? REX_SWITCH_INVALID_HANDLE : it->second.handle;
 }
 
 /* --- affinity ---------------------------------------------------------- */

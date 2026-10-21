@@ -20,6 +20,10 @@
 
 #include <uam_api.h>
 
+#ifdef __SWITCH__
+extern "C" void RexSwitchRegisterCurrentThreadNamed(const char *name);  // mk9-nx: the SDK's thread registry
+#endif
+
 namespace plume {
     // ---- helpers
 
@@ -799,6 +803,9 @@ namespace plume {
     Deko3DDevice::Deko3DDevice() {}
 
     static void *compileThreadEntry(void *arg) {
+#ifdef __SWITCH__
+        RexSwitchRegisterCurrentThreadNamed("deko3d compile worker");  // mk9-nx: named in the hang dump
+#endif
         static_cast<Deko3DDevice *>(arg)->compileWorker();
         return nullptr;
     }

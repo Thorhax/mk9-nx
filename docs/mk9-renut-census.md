@@ -117,3 +117,23 @@ What MK9 needed beyond SA2's hooks, in the order it was found:
 Emulator: Chansey's Ryubing fork (private, github ChanseyIsTheBest/ryujinx) runs the deko3d build to the main menu,
 character select and the VS screen (Eden 0.2.1 aborts on any deko3d device creation). Ryujinx refuses root: runs go
 through the unprivileged user `ryutest` (/home/ryutest), audio backend Dummy (no sound device here).
+
+## 2026-10-21 (evening): emulator runs of 0.1.1, hang dump
+
+- Bound-type specialization works on deko3d: the run-time variants carry 1300-1315 (e.g. 0x1A23A6 FLOAT4,
+  0x2A23B9 FLOAT3); the largest variant compile in the emulator dropped from a 470 KB-GLSL stall to ~0.4 s.
+- Offline DKSH cache (`tools/deko3d_variant_cache.py`, now finds the Linux uam) from the PC fight's and the
+  emulator's v5 pipeline lists: 933 variants; the last emulator run compiled nothing (963 hits, 0 compiles).
+- An NRO not named mk9 keeps its own cache (`<name>_deko3d_shaders.bin`, banjo_renut_deko3d.cpp), so the
+  no-passes A/B build (`mk9_noopt.nro`, GLSL from out/deko3d_shaders/glsl/glsl) shares the folder.
+- Fight in Ryujinx (Scorpion vs Jax, the Pit): most frames correct; some show huge flat-coloured triangles
+  (blue, magenta/cyan, red) or black over the stage, HUD fine. PC Vulkan is clean. Not yet known whether
+  Ryujinx or the deko3d_glsl_opt passes cause it (the no-passes run reached the fight too late to compare).
+- Main-menu freeze (intermittent, Ryujinx): mk9_hang_dump_s (src/mk9_hang_watch.cpp, RexSwitchDumpThreads in
+  exception_handler_switch.cpp) showed every guest thread waiting; the chain is a pool worker in a movie
+  object's shutdown (sub_82CF6E30: stop request, then wait on its worker threads' handles) whose worker loops in
+  sub_82CE9400: IXAudio2SourceVoice Stop (+80), FlushSourceBuffers (+88), then GetState (+100) every 10 ms
+  until BuffersQueued == 0. The queue drains only when the guest XAudio2 engine runs, i.e. when the SDK's
+  audio pump (switch_audio_system.cpp) gets frames consumed by audout; under Ryujinx (Dummy audio) that can
+  stall. The 0.0.1/0.1.0 console runs reached fights with audio, so likely emulator-only; watch for it.
+- Symbolize hang dumps with the matching ELF: aarch64-none-elf-addr2line -f -C -e out/nx-dk/mk9 <offsets>.

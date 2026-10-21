@@ -505,7 +505,7 @@ X_STATUS XThread::Create() {
     RexSwitchSetCurrentThreadPriority(SwitchPriorityFor(guest_thread_, thread_name_));
     // sa2-nx (2026-10-20): known to the pthread layer by its kernel handle, so another thread can set its cores
     // (RexSetGuestThreadCoreLayout: the registry was empty, and setting another thread's mask failed quietly).
-    RexSwitchRegisterCurrentThread();
+    RexSwitchRegisterCurrentThreadNamed(thread_name_.c_str());  // mk9-nx: named, for the hang dump
     // sa2-nx (2026-10-20): a guest thread made after the layout was set takes the other guest threads' cores.
     if (guest_thread_ && !main_thread_) {
       t_layout_applied = g_guest_layout_gen.load(std::memory_order_acquire);

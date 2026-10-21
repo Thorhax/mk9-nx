@@ -43,6 +43,8 @@ set(MK9_SOURCES
     src/mk9_script_input.cpp
     # Presented frames per second in the log (hook on the game's Direct3D swap, sub_82BF6D58).
     src/mk9_frame_counter.cpp
+    # Switch: every thread's stack in logs/rex/rex_crash.log when no frame is presented for a while (mk9_hang_dump_s).
+    src/mk9_hang_watch.cpp
     # Recordings of the game image for frame-by-frame comparisons (sa2-nx's recorder: sa2_video_s, lockstep).
     src/sa2_capture.cpp
     # Stage 4: the native renderer (src/me, sa2-nx's copy of masseffect-nx's PM4-ring Vulkan renderer as adapted by

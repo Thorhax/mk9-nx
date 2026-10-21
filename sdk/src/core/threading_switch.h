@@ -122,6 +122,10 @@ void RexSwitchRegisterCurrentThread(void);
 void RexSwitchUnregisterCurrentThread(void);
 /* Horizon handle of another pthread, or REX_SWITCH_INVALID_HANDLE. */
 RexSwitchHandle RexSwitchHandleFor(pthread_t thread);
+/* mk9-nx: registers the current thread under a name (RexSwitchRegisterCurrentThread plus the name). */
+void RexSwitchRegisterCurrentThreadNamed(const char* name);
+/* mk9-nx: the registered threads' handles and names (up to max); for the hang dump. */
+size_t RexSwitchListThreads(RexSwitchHandle* handles, char (*names)[40], size_t max);
 
 /* --- suspension, which on Horizon does not use signals ----------------- */
 

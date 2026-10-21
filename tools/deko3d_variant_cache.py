@@ -28,6 +28,8 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UAM = os.path.join(ROOT, 'out', 'deko3d_tools', 'uam-build', 'uam.exe')
+if not os.path.exists(UAM):  # mk9-nx: the Linux build runs through out/deko3d_tools/bin/uam (tools/linux/hostrun.sh)
+    UAM = os.path.join(ROOT, 'out', 'deko3d_tools', 'bin', 'uam')
 TAG = b'uam110-sw8-bnx4\0'  # banjo_renut_deko3d.cpp kCacheTag (16 bytes with its terminator)
 DEFINE_RE = re.compile(r'#define SPIRV_CROSS_CONSTANT_ID_(\d+) (\S+)')
 

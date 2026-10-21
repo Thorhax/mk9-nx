@@ -621,6 +621,82 @@ extern "C" void RexSwitchCrashLog(const char* reason, const ThreadExceptionDump*
   busy.clear();
 }
 
+// mk9-nx (2026-10-21): the stacks of every registered thread, for a hang (the guest stopped presenting and no
+// fault came: in Ryujinx the main menu froze with every guest thread waiting). Each thread is paused just long enough
+// to read its registers and walk its frame chain and stack, then resumed. Appended to the crash file
+// (logs/rex/rex_crash.log); symbolize the image+0x offsets with the ELF (aarch64-none-elf-addr2line -f -C -e mk9.elf).
+extern "C" size_t RexSwitchListThreads(uint32_t* handles, char (*names)[40], size_t max);
+
+extern "C" void RexSwitchDumpThreads(const char* reason) {
+  static std::atomic_flag busy = ATOMIC_FLAG_INIT;
+  if (busy.test_and_set()) {
+    return;
+  }
+  static CrashBuf b;
+  static uint32_t handles[128];
+  static char names[128][40];
+  const size_t count = RexSwitchListThreads(handles, names, 128);
+  const uint64_t base = reinterpret_cast<uint64_t>(&_start);
+  uint64_t text_lo = base, text_hi = base;
+  MemoryInfo mi;
+  if (QueryReadable(base, 4, &mi)) {
+    text_lo = mi.addr;
+    text_hi = mi.addr + mi.size;
+  }
+  const Handle self = threadGetCurHandle();
+  b.len = 0;
+  Append(b, "==== hang: %s (%zu threads registered) ====\n", reason ? reason : "?", count);
+  WriteCrashFile(b.data, b.len);
+  for (size_t i = 0; i < count; ++i) {
+    b.len = 0;
+    const Handle h = handles[i];
+    u64 tid = 0;
+    svcGetThreadId(&tid, h);
+    Append(b, "-- thread %" PRIu64 " '%s'\n", tid, names[i]);
+    if (h == self) {
+      Append(b, "  (the dumping thread)\n");
+      WriteCrashFile(b.data, b.len);
+      continue;
+    }
+    if (R_FAILED(svcSetThreadActivity(h, ThreadActivity_Paused))) {
+      Append(b, "  could not be paused\n");
+      WriteCrashFile(b.data, b.len);
+      continue;
+    }
+    ThreadContext ctx;
+    const Result rc = svcGetThreadContext3(&ctx, h);
+    if (R_SUCCEEDED(rc)) {
+      const uint64_t pc = ctx.pc.x, lr = ctx.lr;
+      Append(b, "  pc %s0x%" PRIx64 "  lr %s0x%" PRIx64 "  sp 0x%016" PRIx64 "\n",
+             (pc >= text_lo && pc < text_hi) ? "image+" : "", (pc >= text_lo && pc < text_hi) ? pc - base : pc,
+             (lr >= text_lo && lr < text_hi) ? "image+" : "", (lr >= text_lo && lr < text_hi) ? lr - base : lr,
+             ctx.sp);
+      Append(b, "  x0 0x%" PRIx64 "  x1 0x%" PRIx64 "  x2 0x%" PRIx64 "  x8 0x%" PRIx64 "\n", ctx.cpu_gprs[0].x,
+             ctx.cpu_gprs[1].x, ctx.cpu_gprs[2].x, ctx.cpu_gprs[8].x);
+      uint64_t frame = ctx.fp;
+      for (int d = 0; d < 32 && (frame & 7) == 0 && QueryReadable(frame, 16, &mi); ++d) {
+        const uint64_t next = reinterpret_cast<const uint64_t*>(frame)[0];
+        const uint64_t ret = reinterpret_cast<const uint64_t*>(frame)[1];
+        if (ret >= text_lo && ret < text_hi) {
+          Append(b, "  #%02d image+0x%" PRIx64 "\n", d, ret - base);
+        } else {
+          Append(b, "  #%02d 0x%016" PRIx64 "\n", d, ret);
+        }
+        if (next <= frame) {
+          break;
+        }
+        frame = next;
+      }
+    } else {
+      Append(b, "  no context (0x%x)\n", rc);
+    }
+    svcSetThreadActivity(h, ThreadActivity_Runnable);
+    WriteCrashFile(b.data, b.len);
+  }
+  WriteCrashFile("\n", 1);
+  busy.clear();
+}
+
 namespace rex::arch {
 
 static_assert(sizeof(vec128_t) == 16, "vec128_t is no longer 16 bytes");

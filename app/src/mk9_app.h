@@ -20,6 +20,7 @@
 #include "sa2_capture.h"
 #include "mk9_script_input.h"
 #include "mk9_snapshot.h"
+#include "mk9_hang_watch.h"
 
 // mk9-nx (2026-10-20): Renut's Direct3D-level renderer (src/renut_engine/gpu, from reNut by masterspike52 through
 // banjo-nx and sa2-nx), chosen at boot with sa2_renderer = "renut" (docs/mk9-renut-census.md).
@@ -138,6 +139,7 @@ class Mk9App : public rex::ReXApp {
 
   // Test snapshots of the game image (mk9_snapshot_s), read from the presenter's guest output.
   void OnPostSetup() override {
+    mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
     // Every 10 s: how often each active enhancement was used (a log shows they really ran).
     sa2::enh::StartReport();
     // Short video recordings of the game image (sa2_video_s; sa2-nx's recorder, lockstep with vblank_per_swap): raw

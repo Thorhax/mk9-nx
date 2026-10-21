@@ -1308,8 +1308,13 @@ uint64_t PmullHash(const void *data, size_t size, uint64_t seed) {
 #endif
 }
 
+#if REX_PLATFORM_SWITCH
+extern "C" void RexSwitchRegisterCurrentThreadNamed(const char *name);  // the SDK's thread registry (hang dump)
+#endif
+
 void OnRenderThreadStart() {
 #if REX_PLATFORM_SWITCH
+  RexSwitchRegisterCurrentThreadNamed("renut render thread");  // mk9-nx: named in the hang dump
   const bool priority_ok = RexSwitchSetCurrentThreadPriorityOk(kRenderThreadPriority);
   const int32_t core = REXCVAR_GET(banjo_ring_core);
   const bool core_ok = core < 0 || RexSwitchPinCurrentThreadToCore(int(core));
@@ -1323,6 +1328,7 @@ void OnRenderThreadStart() {
 
 void OnBackgroundThreadStart(const char *what) {
 #if REX_PLATFORM_SWITCH
+  RexSwitchRegisterCurrentThreadNamed(what);  // mk9-nx: named in the hang dump
   const bool priority_ok = RexSwitchSetCurrentThreadPriorityOk(kBackgroundPriority);
   const int32_t core = REXCVAR_GET(banjo_background_compile_core);
   const bool core_ok = core < 0 || RexSwitchPinCurrentThreadToCore(int(core));

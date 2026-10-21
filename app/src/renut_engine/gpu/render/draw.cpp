@@ -1258,6 +1258,9 @@ bool BindTargets(const Targets &t) {
               t.color_count ? t.colors[0]->height : 0, t.color_count ? u32(t.colors[0]->format) : 0,
               t.color_count ? u32(t.colors[0]->samples) : 0, t.depth ? t.depth->guest_va : 0,
               t.depth ? t.depth->width : 0, t.depth ? t.depth->height : 0, t.depth ? u32(t.depth->samples) : 0);
+    if (const auto *desc = t.color_count ? GuestPtr<const d3d::SurfaceDesc>(t.colors[0]->guest_va + 0x18) : nullptr)
+      RGPU_INFO("[trace]   colour EDRAM base {} pitch {} msaa {} format {:08X}", u32(desc->ColorInfo) & 0xFFF,
+                u32(desc->SurfaceInfo) & 0x3FFF, (u32(desc->SurfaceInfo) >> 16) & 3, u32(desc->Format));
     g_trace_draws = 0;
   }
   if (g_bound.framebuffer != framebuffer) {
@@ -4778,6 +4781,19 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
                                REXCVAR_GET(banjo_renut_diag_draw_log_s) > 0;
   if (draw_log)
     DrawLog(call, geometry, vs, ps, targets, key, sc, export_count);
+    // mk9-nx (2026-10-21): bring-up diagnostic, with the draw log: the pixel shader's registers 0-5 as the draw has them.
+    if (static const int32_t mk9_at = REXCVAR_GET(banjo_renut_diag_draw_log_s); mk9_at > 0) {
+      static uint32_t mk9_n = 0;
+      if (mk9_n < 400 && TextureFrameLocked() > 0) {
+        auto f = [&](u32 r, u32 c) { return float(*reinterpret_cast<const be_f32 *>(ps_constants.Register(r) + c * 4)); };
+        static auto start = std::chrono::steady_clock::now();
+        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(mk9_at)) {
+          ++mk9_n;
+          RGPU_INFO("[mk9] ps {:016X} c0 {} {} {} {} c3 {} {} {} {} c4 {} c5 {}", ps ? ps->hash : 0, f(0, 0), f(0, 1),
+                    f(0, 2), f(0, 3), f(3, 0), f(3, 1), f(3, 2), f(3, 3), f(4, 0), f(5, 0));
+        }
+      }
+    }
   // banjo-nx (2026-10-19, banjo_renut_resolve_skip): the targets this draw can write.
   for (u32 i = 0; i < targets.color_count && i < key.color_count; ++i)
     if ((key.color_mask >> (4 * i)) & 0xF)
@@ -5502,6 +5518,10 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
               surface->depth ? "depth" : "colour", source_va, surface->width, surface->height, u32(surface->format),
               u32(surface->samples), dest_texture_va, dest_x, dest_y, dest_level, dest_slice, r.x1, r.y1, r.x2, r.y2,
               flags, (flags & 0x100) ? "clear colour after " : "", (flags & 0x200) ? "clear depth after" : "");
+    // mk9-nx (2026-10-21): the source's EDRAM view (TargetKey's fields), to see aliases.
+    if (const auto *desc = GuestPtr<const d3d::SurfaceDesc>(source_va + 0x18))
+      RGPU_INFO("[trace]   source EDRAM base {} pitch {} msaa {} format {:08X}", u32(desc->ColorInfo) & 0xFFF,
+                u32(desc->SurfaceInfo) & 0x3FFF, (u32(desc->SurfaceInfo) >> 16) & 3, u32(desc->Format));
   }
   plume::RenderCommandList *cmd = s.command_list;
   static uint32_t depth_logged = 0;

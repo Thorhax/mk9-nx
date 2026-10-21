@@ -184,6 +184,21 @@ void D3DDevice_DrawIndexedVerticesUP_hook(u32 device, u32 primitive, u32 min_ver
                                           u32 index_format, u32 vertex_data, u32 stride) {
   if (!Active() || !index_data || !vertex_data)
     return;
+  // mk9-nx (2026-10-21): bring-up diagnostic: the first indexed UP draws' data and the bound declaration.
+  if (static uint32_t mk9_n = 0; mk9_n < 12) {
+    ++mk9_n;
+    const auto *v = GuestPtr<const be_f32>(vertex_data);
+    const auto *i16 = GuestPtr<const be_u16>(index_data);
+    const u32 decl = LoadU32(device + d3d::kDeviceOffsetVertexDeclaration);
+    const auto *e = decl ? GuestPtr<const be_u32>(decl) : nullptr;
+    RGPU_INFO("[mk9] DrawIndexedVerticesUP prim {} min {} num {} count {} fmt {:X} stride {}; v0 {} {} {} {} v1 {} {} {} {}; "
+              "i {} {} {}; decl {:08X} words {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+              primitive, min_vertex, num_vertices, index_count, index_format, stride, float(v[0]), float(v[1]),
+              float(v[2]), float(v[3]), float(v[stride / 4]), float(v[stride / 4 + 1]), float(v[stride / 4 + 2]),
+              float(v[stride / 4 + 3]), u32(i16[0]), u32(i16[1]), u32(i16[2]), decl, e ? u32(e[0]) : 0, e ? u32(e[1]) : 0,
+              e ? u32(e[2]) : 0, e ? u32(e[3]) : 0, e ? u32(e[4]) : 0, e ? u32(e[5]) : 0, e ? u32(e[6]) : 0,
+              e ? u32(e[7]) : 0);
+  }
   DrawCall call;
   call.primitive = primitive;
   call.indexed = true;

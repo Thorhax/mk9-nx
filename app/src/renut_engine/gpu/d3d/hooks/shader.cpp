@@ -12,6 +12,7 @@
  * guest objects; the host side is kept per object address, keyed by the same
  * container hash.
  */
+#include <array>
 #include <cstring>
 #include <memory>
 #include <unordered_map>
@@ -495,4 +496,38 @@ BANJO_RENUT_HOOK_RAW(sub_82BEA068) {
   const u32 declaration = ctx.r3.u32;
   if (const auto *elements = declaration ? GuestPtr<const GuestVertexElement>(elements_va) : nullptr)
     RegisterGuestDeclaration(declaration, elements);
+}
+
+// mk9-nx (2026-10-21): void D3DVertexShader_Bind(D3DVertexShader*, DWORD Flags, D3DVertexDeclaration*,
+//     const DWORD *pStreamStrides, ...) [MK9 sub_82BFF878; N&B 0x82657048]. UE3 (sub_826CB788) binds its vertex shaders to
+// their declarations and then draws its screen quads, text and movies' neighbours with no declaration set (device
+// +12120 is 0): the game's own code patches the shader object's fetches, and Renut keeps the declaration and strides on
+// its shader record, as N&B's hook does (D3DVertexShader_Bind_hook). Without it those draws took the container's own
+// unpatched fetches and drew nothing. MK9's declarations are the game's own objects (RegisterGuestDeclaration), so they
+// are looked up there on the render thread.
+BANJO_RENUT_HOOK_RAW(sub_82BFF878) {
+  const u32 shader_va = ctx.r3.u32, declaration_va = ctx.r5.u32, strides_va = ctx.r6.u32;
+  __imp__sub_82BFF878(ctx, base);
+  if (!shader_va || !declaration_va)
+    return;
+  std::array<u32, d3d::kMaxStreams> strides{};
+  if (const auto *guest = strides_va ? GuestPtr<const be_u32>(strides_va) : nullptr) {
+    for (u32 s = 0; s < d3d::kMaxStreams; ++s)
+      strides[s] = u32(guest[s]);
+  }
+  render_thread::Queue([shader_va, declaration_va, strides] {
+    const VertexDeclarationRecord *declaration =
+        FindRecord<VertexDeclarationRecord>(declaration_va, RecordKind::VertexDeclaration);
+    if (!declaration)
+      declaration = FindGuestDeclarationLocked(declaration_va);
+    auto *shader = FindShaderLocked(shader_va, RecordKind::VertexShader);
+    if (!declaration || !shader)
+      return;
+    shader->bound_declaration = std::make_unique<VertexDeclarationRecord>(*declaration);
+    for (const GuestVertexElement &element : declaration->elements) {
+      const u32 stream = element.Stream;
+      if (stream < d3d::kMaxStreams)
+        shader->bound_strides[stream] = strides[stream];
+    }
+  });
 }

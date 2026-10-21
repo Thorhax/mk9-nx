@@ -379,6 +379,16 @@ void ReadLevel(const TextureFormatInfo &info, const TextureFetch &fetch, const L
       }
       SwapEndian(endian, row.data(), row.data(), row.size());
       uint8_t *out = dst + size_t(z) * dst_slice_pitch + size_t(y) * dst_row_pitch;
+      // mk9-nx (2026-10-21): bring-up diagnostic: the first rows of the first tiled reads.
+      if (static uint32_t mk9_rows = 0; fetch.Tiled() && y == 8 && z == 0 && mk9_rows < 12) {
+        ++mk9_rows;
+        uint32_t sum = 0;
+        for (uint8_t b : row)
+          sum += b;
+        RGPU_INFO("[mk9] tiled row: format {} blocks {}x{} pitch {} height {} gbpb {} hbpb {} conv {} sum {} base {:p}",
+                  u32(fetch.Format()), blocks_w, blocks_h, src.pitch_blocks, src.height_blocks, gbpb, hbpb,
+                  int(info.conversion), sum, static_cast<const void *>(src.base));
+      }
       if (info.conversion == TexelConversion::Copy)
         std::memcpy(out, row.data(), size_t(blocks_w) * hbpb);
       else if (info.decoded_blocks)
@@ -1218,6 +1228,20 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
       }
       Retire(*slot);
       return binding;  // keep the entry so it is not retried every draw
+    }
+    // mk9-nx (2026-10-21): bring-up diagnostic: the first textures made from guest memory, with a sum of their first
+    // KB (all zero = nothing the CPU wrote is there).
+    static uint32_t mk9_logged = 0;
+    if (mk9_logged++ < 40) {
+      const u32 base = fetch.BasePage() << 12;
+      const u8 *data = base ? GuestPhysicalPtr<const u8>(base) : nullptr;
+      uint32_t sum = 0;
+      for (u32 i = 0; data && i < 1024; ++i)
+        sum += data[i];
+      RGPU_INFO("[mk9] texture {:08X}: format {} {}x{}x{} levels {} tiled {} base {:08X} first KB sum {} dwords {:08X} "
+                "{:08X} {:08X} {:08X} {:08X} {:08X}", texture_va, u32(fetch.Format()), slot->width, slot->height,
+                slot->depth, slot->mip_levels, fetch.Tiled(), base, sum, fetch.dword[0], fetch.dword[1],
+                fetch.dword[2], fetch.dword[3], fetch.dword[4], fetch.dword[5]);
     }
   }
   HostTexture &t = *slot;

@@ -68,6 +68,10 @@ REXCVAR_DECLARE(bool, sa2_renut_gamma_ramp);  // sa2-nx (2026-10-20): backend/pr
 // sa2-nx (2026-10-20, sa2_renut_core_layout): the SDK's core layout (system/xthread.cpp).
 extern "C" uint32_t RexSetGuestThreadCoreLayout(int main_core, uint32_t others_mask, int others_preferred);
 
+REXCVAR_DEFINE_STRING(mk9_diag_present_texture, "", "MK9",
+                      "Diagnostic (Renut's renderer): the guest address (hex) of a texture to present instead of the "
+                      "front buffer, when the renderer has it");
+
 // Kernel exports the device code uses.
 REX_IMPORT(__imp__rex_GetCurrentThreadId, GuestGetCurrentThreadId, u32());
 REX_IMPORT(__imp__RtlInitializeCriticalSection, RtlInitializeCriticalSection, void(u32));
@@ -928,13 +932,37 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
     // (sa2_renut_gamma_ramp).
   }
 
+  // mk9-nx (2026-10-21): bring-up diagnostic, every 300th Swap: the window packet and the scissor rectangle.
+  if (static uint64_t mk9_n = 0; device && mk9_n++ % 300 == 0) {
+    auto w = [device](u32 o) { return u32(*reinterpret_cast<const be_u32 *>(device + o)); };
+    auto f = [device](u32 reg, u32 c) { return float(*reinterpret_cast<const be_f32 *>(device + 6016 + reg * 16 + c * 4)); };
+    RGPU_INFO("[mk9] PS c0 {} {} {} {} c3 {} {} {} {} c4 {} {} {} {} c254 {} {} {}; VS c0 {} {} {} {}", f(0, 0), f(0, 1),
+              f(0, 2), f(0, 3), f(3, 0), f(3, 1), f(3, 2), f(3, 3), f(4, 0), f(4, 1), f(4, 2), f(4, 3), f(254, 0),
+              f(254, 1), f(254, 2), float(*reinterpret_cast<const be_f32 *>(device + 1920)),
+              float(*reinterpret_cast<const be_f32 *>(device + 1924)), float(*reinterpret_cast<const be_f32 *>(device + 1928)),
+              float(*reinterpret_cast<const be_f32 *>(device + 1932)));
+    RGPU_INFO("[mk9] window packet {:08X} {:08X} {:08X}; scissor rect {} {} {} {}; surface info {:08X} color0 {:08X}",
+              w(0x28C0), w(0x28C4), w(0x28C8), w(12924), w(12928), w(12932), w(12936), w(0x2880), w(0x2884));
+  }
   render_thread::QueueFrame([front_buffer, swap_ordinal] {
     PresentImage image;
     {
       std::lock_guard lock(State().mutex);
       image = FrontBufferImageLocked(front_buffer);
+      // mk9-nx (2026-10-21): bring-up diagnostic: present another guest texture (a resolve target) instead.
+      if (const std::string &show = REXCVAR_GET(mk9_diag_present_texture); !show.empty()) {
+        const PresentImage other = FrontBufferImageLocked(u32(std::stoul(show, nullptr, 16)));
+        if (other.texture)
+          image = other;
+      }
       if (image.texture)
         State().last_front_buffer = front_buffer;
+      // mk9-nx (2026-10-21): bring-up diagnostic, every 300th Swap: what the front buffer was found as.
+      static uint64_t mk9_swaps = 0;
+      if (mk9_swaps++ % 300 == 0)
+        RGPU_INFO("[mk9] Swap {}: front buffer {:08X} -> {} ({}x{}, source {}x{}, written {})", mk9_swaps,
+                  front_buffer, image.texture ? "texture" : "none", image.width, image.height, image.source_width,
+                  image.source_height, FrontBufferWrittenLocked(front_buffer));
       AdvanceTextureFrameLocked();
       AdvanceStreamCacheFrameLocked();
       LatchResolutionScaleLocked();
@@ -1298,6 +1326,13 @@ void SetFence(u32 device_va) {
 REX_EXTERN(__imp__sub_82BF6108);  // Direct3D_CreateDevice, the original
 REX_EXTERN(__imp__sub_82C014C8);  // D3D::InitializePresentationParameters (CDevice*, D3DPRESENT_PARAMETERS*)
 REX_EXTERN(__imp__sub_82C01260);  // D3D::InitializeApiState (CDevice*)
+// mk9-nx (2026-10-21): three more of MK9's hardware path (sub_82C019D0) that only allocate and fill guest memory: the
+// query block (+24272..24288: the queries' packets and slots; D3D's sub_82BF61E0, which UE3 calls when a fight loads,
+// writes the slots: a write at 0x10 without it), the block at +24296..24328, and the shader-state buffers
+// (+14056..14064, +15092/15096) UE3's indirect-buffer writer sub_82BEA0E8 reads. Each returns nonzero on success.
+REX_EXTERN(__imp__sub_82BF5F90);
+REX_EXTERN(__imp__sub_82BF57A8);
+REX_EXTERN(__imp__sub_82BEB450);
 
 namespace {
 
@@ -1368,6 +1403,12 @@ void Sa2CreateDevice(PPCContext &ctx, uint8_t *base) {
         ctx.r3.u64 = kE_OUTOFMEMORY;
         return;
       }
+    }
+    for (auto *setup : {&__imp__sub_82BF5F90, &__imp__sub_82BF57A8, &__imp__sub_82BEB450}) {  // mk9-nx
+      ctx.r3.u64 = device_va;
+      setup(ctx, base);
+      if (!ctx.r3.u32)
+        RGPU_ERROR("Direct3D_CreateDevice: a hardware-path allocation failed");
     }
     ctx.r3.u64 = device_va;
     __imp__sub_82C01260(ctx, base);

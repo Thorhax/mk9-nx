@@ -155,3 +155,20 @@ through the unprivileged user `ryutest` (/home/ryutest), audio backend Dummy (no
 - Audio: SwitchAudioSystem::PumpTick drops the oldest frame after 64 ticks above the target queue (audout stopped
   consuming in Ryujinx): fixes the main-menu freeze (sub_82CE9400's XAudio2 drain wait).
 - 0.1.2 to SD_OUT with three console tests (normal + diag, stock uam options, deko3d extras off).
+
+## 2026-10-22 (night): the fights' triangles found
+
+- tools/deko3d_diag_positions.py (test builds only, mk9_posdiag.nro): every vertex shader checks gl_Position and, if
+  NaN / infinite / beyond 1e7, counts it per shader hash in storage binding 13 (plume_deko3d's position diagnostics
+  buffer) and captures the first bad vertex (attributes and constants 0-63, or for window shaders the vertex index, the
+  bound elements, their streams' slots and the words fetched). Logged as "[posdiag]" with the 10 s report.
+- Console: every culprit was a window shader (vfetchBound / vfetchMemory through binding 15). Captures showed four
+  streams of one draw (fetch 92-95, strides 20/1/3/3) with one slot, or slot 0: the shader read another buffer's copy.
+- Cause: UploadVertexFetchData looked a reused copy's offset up again in g_fetch_copies (direct-mapped, 256 entries)
+  in its second pass, after a copy made in the same pass for another buffer could have overwritten that entry. Fixed by
+  keeping the offset found in the first pass (reused_offset). Host pointers differ between the PC and the Switch, so the
+  collisions (and the bug) showed only on the Switch and in Ryujinx.
+- Ryujinx still shows rare NaN positions from attribute-based skinned shaders with a morph position (vs 5A029017DA23D1E1,
+  vs 0FD3558E6608719E); never seen on the console.
+- primitive restart for strips in plume_deko3d (parity with the Vulkan pipelines); MK9's index buffers hold no cut
+  indices (counted on the PC), so it changed nothing visible.

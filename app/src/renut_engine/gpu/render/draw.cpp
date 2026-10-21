@@ -2946,6 +2946,11 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
   // chunk the allocation goes to are read there (before, their room was taken anyway, and cleaned at the submit). If
   // the allocation lands in another chunk, none is (that chunk has none of them): then room for all.
   bool reused[32] = {};
+  // mk9-nx (2026-10-21): the queued copy's offset, taken when it is found. g_fetch_copies is direct-mapped: a copy this
+  // draw makes below for another buffer whose key lands on the same entry overwrites it, and reading the entry again
+  // then gave the reused stream the other buffer's offset (two streams of a draw with one slot, the other's bytes
+  // decoded as positions: the fights' huge triangles on the Switch, where host pointers collide differently).
+  u32 reused_offset[32] = {};
   u32 needed = total;
   const plume::RenderBuffer *chunk = shared ? Video::UploadsLocked().CurrentBuffer() : nullptr;
   if (shared && chunk) {
@@ -2956,6 +2961,7 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
         const FetchCopy &known = FetchCopyFor(c.src, c.size);
         reused[i] = known.generation == g_fetch_copy_generation && known.src == c.src && known.size == c.size &&
                     known.buffer == chunk;
+        reused_offset[i] = known.offset;
       }
       if (!reused[i])
         needed += (c.size + 15u) & ~15u;
@@ -2977,7 +2983,7 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
     u32 at = u32(chunk_offset) + offset;
     if (reused[i]) {
       // Queued in this chunk by an earlier draw: read there, no room here.
-      sc.vertex_fetch_slots[c.index] = FetchCopyFor(c.src, c.size).offset | c.endian;
+      sc.vertex_fetch_slots[c.index] = reused_offset[i] | c.endian;
       continue;
     }
     if (c.size && !c.exported) {
@@ -3010,6 +3016,27 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
       }
     }
     offset += (c.size + 15u) & ~15u;
+  }
+  // mk9-nx (2026-10-21, mk9_diag_bad_vertices): two different buffers with one slot, or a copied buffer with slot 0.
+  static const bool diag_slots = REXCVAR_GET(mk9_diag_bad_vertices);
+  if (diag_slots) {
+    static uint32_t logged = 0;
+    for (u32 i = 0; i < copy_count && logged < 32; ++i) {
+      const Copy &a = copies[i];
+      if (!a.size)
+        continue;
+      const u32 sa = sc.vertex_fetch_slots[a.index] & ~3u;
+      bool bad = sa == 0 && shared && chunk_offset != 0;
+      for (u32 j = i + 1; j < copy_count && !bad; ++j) {
+        const Copy &b = copies[j];
+        bad = b.size && b.src != a.src && (sc.vertex_fetch_slots[b.index] & ~3u) == sa;
+      }
+      if (bad) {
+        ++logged;
+        RGPU_WARN("[badslot] fetch {} slot {:08X} (src {} size {}, reused {}) shares or lacks its copy; chunk offset {}",
+                  a.index, sc.vertex_fetch_slots[a.index], fmt::ptr(a.src), a.size, reused[i], chunk_offset);
+      }
+    }
   }
   if (shared) {
     alloc.ref.offset = 0;

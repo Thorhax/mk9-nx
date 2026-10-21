@@ -89,7 +89,14 @@ constexpr u32 kRingSinkSize = 4u << 20;
 constexpr u32 kRingSinkGuaranteeMargin = 256u << 10;
 // Scratch handed out for inline data (RingBufferDeviceAllocate), reused in a
 // circle: nothing reads it either.
-constexpr u32 kRingDataSize = 1u << 20;
+// mk9-nx (2026-10-21): MK9 does read it: its particles and sprites (quad lists) take their vertex data from
+// RingBufferDeviceAllocate / AllocateInlineData, and the renderer copies vertex streams at the kick, on the render
+// thread. A 512 KB circle with nothing guarding it was rewritten by later batches before that copy on the Switch
+// (and in Ryujinx; the PC's render thread kept up): those draws read another batch's bytes (half floats as floats) and
+// covered the screen with huge flat-coloured triangles. Now 8 MB in quarters, a quarter reused only once the fence
+// current when the circle left it has completed (RingData).
+constexpr u32 kRingDataSize = 8u << 20;
+constexpr u32 kRingDataQuarters = 4;
 
 // CDevice-private state Direct3D_CreateDevice (0x8264DF28) sets up, as byte
 // offsets into the device allocation. sa2-nx (2026-10-20): SA2's (d3d.h),
@@ -133,6 +140,11 @@ constexpr u32 kE_OUTOFMEMORY = 0x8007000Eu;
 u32 g_ring_sink = 0;
 u32 g_ring_data = 0;
 std::atomic<u32> g_ring_data_offset{0};
+// mk9-nx (2026-10-21): the quarter of the circle the last allocation ended in, and per quarter the device's fence tag
+// when the circle left it (bit 0 set: none yet; tags are even).
+std::atomic<u32> g_ring_data_quarter{0};
+std::atomic<u32> g_ring_quarter_fence[kRingDataQuarters] = {1, 1, 1, 1};
+std::atomic<uint64_t> g_ring_quarter_waits{0};
 
 // Device blocks of released devices, for the next Direct3D_CreateDevice (the
 // records heap never frees physical blocks). N&B creates and releases a pair
@@ -550,9 +562,35 @@ u32 BeginRingManual_hook(u32 device_va) {
   return d ? d.W(native::off::Ring) : 0;
 }
 
+u32 BlockOnFence_hook(u32 device_va, u32 fence, u32 type, u32 no_kick);
+
+// mk9-nx (2026-10-21): the title device's allocations moving into another quarter of the circle: the quarter left gets
+// the fence the next kick will queue (its draws' streams are copied before that fence completes), and the quarter
+// entered waits for the fence it got a lap ago. Normally long complete; the wait is the render thread catching up.
+void GuardRingQuarter(u32 device_va, u32 entered) {
+  const u32 left = g_ring_data_quarter.exchange(entered, std::memory_order_acq_rel);
+  if (left == entered)
+    return;
+  auto *bytes = GuestPtr<u8>(device_va);
+  if (!bytes)
+    return;
+  const u32 tag = *reinterpret_cast<const be_u32 *>(bytes + d3d::kDeviceOffsetFenceTag);
+  g_ring_quarter_fence[left].store(tag & ~1u, std::memory_order_release);
+  const u32 wait = g_ring_quarter_fence[entered].load(std::memory_order_acquire);
+  if (wait & 1u)
+    return;
+  if (FencePending(bytes, wait)) {
+    const uint64_t waits = g_ring_quarter_waits.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (waits <= 8 || (waits & 255) == 0)
+      RGPU_INFO("[mk9] inline-data ring: quarter {} waits for fence {:08X} (the render thread's copies; {} waits)",
+                entered, wait, waits);
+    BlockOnFence_hook(device_va, wait, 0, 0);
+  }
+}
+
 // Inline data space (vertex data of inline draws, clear rects): scratch that
 // nothing reads, handed out in a circle.
-u32 RingData(u32 bytes, u32 alignment) {
+u32 RingData(u32 device_va, u32 bytes, u32 alignment) {
   if (!g_ring_data || bytes > kRingDataSize / 2)
     return 0;
   if (alignment < 4 || (alignment & (alignment - 1)))
@@ -560,19 +598,26 @@ u32 RingData(u32 bytes, u32 alignment) {
   u32 offset = g_ring_data_offset.fetch_add(bytes + alignment, std::memory_order_relaxed);
   offset %= kRingDataSize / 2;
   offset = (offset + alignment - 1) & ~(alignment - 1);
+  // mk9-nx: by where the allocation ends (past the circle: its last quarter), so its bytes never reach a quarter
+  // whose old contents may still be copied. Only the title device's (a recording thread must not kick it).
+  if (device_va && device_va == Video::GuestDevice()) {
+    constexpr u32 kQuarterBytes = kRingDataSize / 2 / kRingDataQuarters;
+    const u32 end = std::min(offset + bytes, kRingDataSize / 2) - (bytes ? 1 : 0);
+    GuardRingQuarter(device_va, std::min(end / kQuarterBytes, kRingDataQuarters - 1));
+  }
   return g_ring_data + offset;
 }
 
 // void *D3D::RingBufferDeviceAllocate(CDevice*, DWORD Flags, DWORD *pSize,
 //     DWORD Alignment) [0x8222D3E0]
-u32 RingBufferDeviceAllocate_hook(u32 /*device*/, u32 /*flags*/, mapped_u32 size, u32 alignment) {
-  return size ? RingData(u32(*size), alignment) : 0;
+u32 RingBufferDeviceAllocate_hook(u32 device, u32 /*flags*/, mapped_u32 size, u32 alignment) {
+  return size ? RingData(device, u32(*size), alignment) : 0;
 }
 
 // void *CDevice inline data allocation (sub_8222D240): from the ring, or from
 // the allocator of the command buffer being recorded.
-u32 AllocateInlineData_hook(u32 /*device*/, u32 dwords, u32 alignment) {
-  return RingData(dwords * 4, alignment);
+u32 AllocateInlineData_hook(u32 device, u32 dwords, u32 alignment) {
+  return RingData(device, dwords * 4, alignment);
 }
 
 // HRESULT D3DDevice_SetRingBufferParameters(D3DDevice*,

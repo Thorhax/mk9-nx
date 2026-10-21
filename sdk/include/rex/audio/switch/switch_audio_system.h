@@ -44,6 +44,8 @@ class SwitchAudioDriver final : public AudioDriver {
   // frame request (a semaphore release).
   size_t QueuedFrames();
   void RequestFrame();
+  // mk9-nx (2026-10-21): drops the oldest queued frame (audout stopped taking them); false when none is queued.
+  bool DropOldestFrame();
 
  private:
   rex::thread::Semaphore* semaphore_;

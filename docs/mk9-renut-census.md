@@ -137,3 +137,21 @@ through the unprivileged user `ryutest` (/home/ryutest), audio backend Dummy (no
   audio pump (switch_audio_system.cpp) gets frames consumed by audout; under Ryujinx (Dummy audio) that can
   stall. The 0.0.1/0.1.0 console runs reached fights with audio, so likely emulator-only; watch for it.
 - Symbolize hang dumps with the matching ELF: aarch64-none-elf-addr2line -f -C -e out/nx-dk/mk9 <offsets>.
+
+## 2026-10-21 (night): console 0.1.1 test, triangles hunt
+
+- The user's console shows the same huge flat-coloured triangles with mk9.nro and mk9_noopt.nro: not Ryujinx and not
+  the deko3d_glsl_opt passes. Fights otherwise 20-40 fps on hardware (old renderer: ~19).
+- Not reproduced on the PC (Vulkan), not even with banjo_renut_memory_policy=true (the Switch's only config default
+  that differs).
+- mk9_diag_bad_vertices (render/draw.cpp): float positions of converted streams; found quad-list draws reading
+  RingData scratch (half floats where floats are declared) -> the inline-data ring is now 8 MB in fence-guarded
+  quarters (d3d/hooks/device.cpp). The guard never had to wait in Ryujinx, and runs with artifacts logged no bad
+  float positions at all: that ring was not the main cause.
+- Ryujinx bisection: all nine deko3d extras off still showed (smaller, translucent) triangles; push-constant verify
+  found 0 wrong registers. Stock uam options (banjo_deko3d_uam_prmt/gvn/uniform_branches/wide_rows off) made Ryujinx
+  far worse, so Ryujinx is no judge of shader-level causes. Barriers are recompiled as fences (lwsync acq_rel,
+  sync/eieio seq_cst).
+- Audio: SwitchAudioSystem::PumpTick drops the oldest frame after 64 ticks above the target queue (audout stopped
+  consuming in Ryujinx): fixes the main-menu freeze (sub_82CE9400's XAudio2 drain wait).
+- 0.1.2 to SD_OUT with three console tests (normal + diag, stock uam options, deko3d extras off).

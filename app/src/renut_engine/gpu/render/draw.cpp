@@ -484,6 +484,8 @@ struct PendingStreamFill {
   u8 *host = nullptr;
   StreamKey key{};   // cacheable: the g_stream_cache entry
   bool cacheable = false;
+  uint64_t vs_hash = 0, ps_hash = 0;  // mk9-nx: mk9_diag_bad_vertices names the draw
+  u32 primitive = 0;
 };
 struct PendingCopy {
   const u8 *src = nullptr;
@@ -2559,6 +2561,78 @@ struct GpuStreams {
   u32 bytes[kMaxVertexStreams] = {};
 };
 
+// mk9-nx (2026-10-21): a test for the fights' huge flat-coloured triangles on the Switch (and Ryujinx; the PC is
+// clean): every converted stream's float positions are checked, and a draw with a NaN, an infinity or a coordinate
+// beyond 1e5 is logged with its shaders. Off by default (it reads back every converted position).
+REXCVAR_DEFINE_BOOL(mk9_diag_bad_vertices, false, "MK9/Renderer",
+                    "Test: log draws whose converted float positions hold a NaN, an infinity or a coordinate beyond "
+                    "1e5 (shaders, primitive, vertex, value; at most 64 lines)");
+
+// The guest word behind each logged bad position, read again at the next flushes: a word that becomes a sane float
+// later was copied before the game had finished writing it (not a decode error).
+struct DiagRecheck {
+  const u8 *guest = nullptr;
+  u32 serial = 0, first_bits = 0, endian = 0;
+};
+DiagRecheck g_diag_rechecks[16];
+u32 g_diag_serial = 0;
+
+void DiagRecheckPositions() {
+  ++g_diag_serial;
+  for (DiagRecheck &r : g_diag_rechecks) {
+    if (!r.guest || g_diag_serial - r.serial < 2)
+      continue;
+    u32 bits = *reinterpret_cast<const be_u32 *>(r.guest);
+    float f;
+    std::memcpy(&f, &bits, 4);
+    RGPU_WARN("[badvert] recheck {} flushes later: word {:08X} -> {:08X} ({}){}", g_diag_serial - r.serial,
+              r.first_bits, bits, f, bits != r.first_bits ? ": changed after the copy" : ": unchanged");
+    r.guest = nullptr;
+  }
+}
+
+void DiagCheckPositions(const HostVertexStream &stream, const u8 *host, u32 count, uint64_t vs_hash, uint64_t ps_hash,
+                        u32 primitive, const u8 *guest, const char *where, u32 guest_stride = 0) {
+  static uint32_t logged = 0;
+  if (logged >= 64)
+    return;
+  for (const HostVertexElement &e : stream.elements) {
+    if (e.usage != 0)  // D3DDECLUSAGE_POSITION
+      continue;
+    const u32 n = e.host_format == plume::RenderFormat::R32G32B32A32_FLOAT ? 4
+                  : e.host_format == plume::RenderFormat::R32G32B32_FLOAT  ? 3
+                  : e.host_format == plume::RenderFormat::R32G32_FLOAT     ? 2
+                                                                            : 0;
+    if (!n)
+      continue;
+    for (u32 v = 0; v < count; ++v) {
+      float f[4] = {};
+      std::memcpy(f, host + size_t(v) * stream.host_stride + e.host_offset, n * 4);
+      for (u32 c = 0; c < n; ++c) {
+        if (std::isfinite(f[c]) && std::fabs(f[c]) <= 1e5f)
+          continue;
+        ++logged;
+        RGPU_WARN("[badvert] {}: vs {:016X} ps {:016X} prim {} vertex {} of {} position.{} = {} (physical {:08X}, "
+                  "format {}, usage index {})",
+                  where, vs_hash, ps_hash, primitive, v, count, "xyzw"[c], f[c],
+                  guest ? u32(guest - detail::GuestPhysicalBase()) : 0,
+                  int(e.host_format), e.usage_index);
+        if (guest && guest_stride && e.conversion == ElementConversion::Copy32) {
+          for (DiagRecheck &r : g_diag_rechecks) {
+            if (r.guest)
+              continue;
+            r.guest = guest + size_t(v) * guest_stride + e.guest_offset + c * 4;
+            r.serial = g_diag_serial;
+            r.first_bits = *reinterpret_cast<const be_u32 *>(r.guest);
+            break;
+          }
+        }
+        return;
+      }
+    }
+  }
+}
+
 // banjo-nx (2026-10-18, the deko3d water): banjo_renut_diag_stream_dump_vs names a vertex shader (hex hash); its draws'
 // streams are logged (first 16): the guest source, the first two vertices as the guest has them and as converted for
 // the host, and whether a cached copy is bound.
@@ -2701,6 +2775,10 @@ bool BindStreams(const GuestDevice &device, const DrawCall &call, const ShaderRe
       if (call.up_vertices && stream == 0) {
         // A copy taken at the call (queued.cpp).
         ConvertVertices(hs, guest, src.stride, count, src.endian, static_cast<u8 *>(alloc.cpu));
+        static const bool diag = REXCVAR_GET(mk9_diag_bad_vertices);
+        if (diag)
+          DiagCheckPositions(hs, static_cast<const u8 *>(alloc.cpu), count, vs.hash, 0, call.primitive,
+                             nullptr, "UP");
       } else {
         PendingStreamFill fill;
         fill.stream = hs;
@@ -2711,6 +2789,8 @@ bool BindStreams(const GuestDevice &device, const DrawCall &call, const ShaderRe
         fill.host = static_cast<u8 *>(alloc.cpu);
         fill.key = key;
         fill.cacheable = cached && !cached->dynamic;
+        fill.vs_hash = vs.hash;  // mk9-nx: mk9_diag_bad_vertices
+        fill.primitive = call.primitive;
         g_stream_fills.push_back(std::move(fill));
         AddQueuedStream(key, alloc);
       }
@@ -3935,10 +4015,16 @@ void FinishRecordingLocked(VideoState &) {
 } // namespace detail
 
 void FlushVertexFillsLocked() {
-  ++g_flush_serial;  // banjo-nx: banjo_renut_exact_streams' intervals
+  ++g_flush_serial;
+  static const bool diag = REXCVAR_GET(mk9_diag_bad_vertices);
+  if (diag)
+    DiagRecheckPositions();  // banjo-nx: banjo_renut_exact_streams' intervals
   banjo::renut_gpu::CountKick();
   for (const PendingStreamFill &f : g_stream_fills) {
     ConvertVertices(f.stream, f.guest, f.stride, f.count, f.endian, f.host);
+    static const bool diag = REXCVAR_GET(mk9_diag_bad_vertices);
+    if (diag)
+      DiagCheckPositions(f.stream, f.host, f.count, f.vs_hash, f.ps_hash, f.primitive, f.guest, "stream", f.stride);
     if (f.cacheable)
       TrackConvertedStream(f);
   }

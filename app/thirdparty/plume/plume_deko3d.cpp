@@ -859,6 +859,12 @@ namespace plume {
             return false;
         memset(dkMemBlockGetCpuAddr(zeroBlock), 0, ZeroSize);
         zeroAddr = dkMemBlockGetGpuAddr(zeroBlock);
+        posDiagBlock = makeBlock(DK_MEMBLOCK_ALIGNMENT * ((PosDiagWords * 4 + DK_MEMBLOCK_ALIGNMENT - 1) / DK_MEMBLOCK_ALIGNMENT),
+                                 DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuUncached, "position diagnostics");
+        if (posDiagBlock) {
+            memset(dkMemBlockGetCpuAddr(posDiagBlock), 0, PosDiagWords * 4);
+            posDiagAddr = dkMemBlockGetGpuAddr(posDiagBlock);
+        }
 
         capabilities.geometryShader = true;
         capabilities.descriptorIndexing = true;
@@ -1956,5 +1962,17 @@ namespace plume {
     bool Deko3DDeviceLost(RenderDevice *device) {
         Deko3DDevice *d = static_cast<Deko3DDevice *>(device);
         return d && d->queue && dkQueueIsInErrorState(d->queue);
+    }
+
+    bool Deko3DTakePosDiag(RenderDevice *device, uint32_t *out, uint32_t words) {
+        Deko3DDevice *d = static_cast<Deko3DDevice *>(device);
+        if (!d || !d->posDiagBlock || words > Deko3DDevice::PosDiagWords)
+            return false;
+        volatile uint32_t *w = static_cast<volatile uint32_t *>(dkMemBlockGetCpuAddr(d->posDiagBlock));
+        for (uint32_t i = 0; i < words; i++) {
+            out[i] = w[i];
+            w[i] = 0;
+        }
+        return true;
     }
 };

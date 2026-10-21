@@ -2080,6 +2080,8 @@ struct Geometry {
   bool per_instance = false;
 };
 
+REXCVAR_DECLARE(bool, mk9_diag_bad_vertices);  // mk9-nx: defined with DiagCheckPositions below
+
 // Reads 'count' guest indices into g_indices.
 bool ReadIndices(const u8 *src, u32 count, bool is32, u32 endian) {
   if (!src || count > kMaxDrawIndices)
@@ -2296,6 +2298,20 @@ bool PrepareGeometry(const GuestDevice &device, const DrawCall &call, Geometry &
     }
     if (!ReadIndices(src, call.count, is32, endian))
       return false;
+    // mk9-nx (2026-10-21, mk9_diag_bad_vertices): draws whose indices hold the all-ones strip-cut value.
+    static const bool diag_cuts = REXCVAR_GET(mk9_diag_bad_vertices);
+    if (diag_cuts) {
+      const u32 cut = is32 ? 0xFFFFFFFFu : 0xFFFFu;
+      u32 cuts = 0;
+      for (u32 index : g_indices)
+        cuts += index == cut;
+      static uint32_t logged = 0;
+      if (cuts && logged < 32) {
+        ++logged;
+        RGPU_WARN("[badvert] cut index: prim {} count {} {}-bit: {} indices are {:X}", call.primitive, call.count,
+                  is32 ? 32 : 16, cuts, cut);
+      }
+    }
     if (expand)
       ExpandIndices(call.primitive);
     if (g_indices.empty())

@@ -124,6 +124,7 @@ namespace plume {
         viewportCount = scissorCount = 0;
         indexAddress = 0;
         boundIndexFormat = DkIdxFormat_Uint16;
+        restartEnabled = -1;  // mk9-nx: set again by this list's first indexed draw
         boundTexCount[0] = boundTexCount[1] = boundTexCount[2] = 0;
         sharedBase = 0;
         sharedSize = 0;
@@ -138,6 +139,12 @@ namespace plume {
         // draw's own range (Deko3DBindFetchData).
         graphicsUbo[PushUboSlot] = {device->pushAddr, Deko3DDevice::PushSize};
         graphicsUboValid |= 1u << PushUboSlot;
+        // mk9-nx (2026-10-21): tools/deko3d_diag_positions.py's counts (storage binding 13), for the shaders that read it.
+        if (device->posDiagAddr) {
+            graphicsSsbo[13] = {device->posDiagAddr, Deko3DDevice::PosDiagWords * 4};
+            graphicsSsboValid |= 1u << 13;
+            ssboBoundStages[13] = 0;
+        }
         // banjo-nx (2026-10-19, GPU, txq): the texture size buffer, for the shaders whose usage has UBO bit 3.
         graphicsUbo[TexSizeUboSlot] = {device->texSizeAddr, Deko3DDevice::TexSizeSize};
         graphicsUboValid |= 1u << TexSizeUboSlot;
@@ -408,6 +415,21 @@ namespace plume {
         if (graphicsPipeline->boundTextures)
             bindTextures();
         flushBarriers();
+        // mk9-nx (2026-10-21): primitive restart for strips, as the Vulkan back end's pipelines enable it
+        // (primitiveRestartEnable for LINE_STRIP / TRIANGLE_STRIP; the index is all ones for the index size). Without it
+        // the Xbox's strip-cut index (0xFFFF) drew as a vertex: the fights' huge flat-coloured wedges on the Switch.
+        {
+            const DkPrimitive prim = graphicsPipeline->primitive;
+            const int enable = (prim == DkPrimitive_TriangleStrip || prim == DkPrimitive_LineStrip) ? 1 : 0;
+            const uint32_t index = boundIndexFormat == DkIdxFormat_Uint32 ? 0xFFFFFFFFu
+                                   : boundIndexFormat == DkIdxFormat_Uint8 ? 0xFFu
+                                                                           : 0xFFFFu;
+            if (enable != restartEnabled || (enable && index != restartIndex)) {
+                dkCmdBufSetPrimitiveRestart(cmd, enable != 0, index);
+                restartEnabled = enable;
+                restartIndex = index;
+            }
+        }
         dkCmdBufDrawIndexed(cmd, graphicsPipeline->primitive, indexCount, instanceCount, startIndex, baseVertex, startInstance);
         ++statDraws;
     }

@@ -7,6 +7,7 @@
 #include "renut_engine/gpu/banjo_renut_record.h"
 #if defined(PLUME_DEKO3D)
 #include "renut_engine/gpu/banjo_renut_deko3d.h"
+#include <plume_deko3d.h>  // mk9-nx: Deko3DTakePosDiag
 #endif
 
 #include <algorithm>
@@ -514,6 +515,7 @@ std::atomic<uint64_t> g_exp_adjust[3];  // 2026-10-20: binds with an exponent ad
 std::atomic<uint64_t> g_skin_miss[6];  // near misses by field: streams, fetch window, index, first vertex, shared, any
 std::atomic<uint64_t> g_header_differ[7];  // 2026-10-20: binds whose header (same data) differs from the device, per dword
 std::atomic<uint64_t> g_ring_published{0};  // render-thread proposal 23
+plume::RenderDevice *g_render_device = nullptr;  // mk9-nx (2026-10-21): OnDeviceCreated's
 std::atomic<uint64_t> g_kick_submit[4];      // lists submitted at a kick, ranges cleaned by the thread / by the render thread
 std::atomic<uint64_t> g_pushed[4];      // banjo_deko3d_push_constants: float bytes, shared bytes, draws, verify misses
 std::atomic<uint64_t> g_depth_float_sampled{0};  // 2026-10-18 census
@@ -783,6 +785,42 @@ void StatsGameFrame() {
     if (const std::string display = banjo::display_sync::Report(); !display.empty())
       REXLOG_INFO("[display] {}", display);
   }
+#if defined(PLUME_DEKO3D)
+  // mk9-nx (2026-10-21): tools/deko3d_diag_positions.py's counts (a test build's shaders write them): the vertex shaders
+  // whose output position was not finite or beyond 1e7 since the last report.
+  if (g_render_device) {
+    static uint32_t words[plume::Deko3DDevice::PosDiagWords];
+    if (plume::Deko3DTakePosDiag(g_render_device, words, plume::Deko3DDevice::PosDiagWords) && (words[0] | words[1])) {
+      REXLOG_WARN("[posdiag] {} vertices not finite, {} beyond 1e7", words[0], words[1]);
+      for (uint32_t slot = 0; slot < 256; ++slot) {
+        const uint32_t *e = words + 4 + slot * 4;
+        if (e[2] | e[3])
+          REXLOG_WARN("[posdiag]   vs {:08X}{:08X}: {} not finite, {} beyond 1e7", e[1], e[0], e[2], e[3]);
+      }
+      // The first bad vertex's capture (tools/deko3d_diag_positions.py): position, inputs in declaration order,
+      // constants 0-63.
+      const uint32_t *c = words + 1028;
+      if (c[0]) {
+        auto f = [&](uint32_t i) {
+          float v;
+          std::memcpy(&v, &c[i], 4);
+          return v;
+        };
+        REXLOG_WARN("[posdiag] capture vs {:08X}{:08X}: position {} {} {} {}", c[2], c[1], f(4), f(5), f(6), f(7));
+        for (uint32_t in = 0; in < 16; ++in) {
+          const uint32_t b = 8 + in * 4;
+          if (c[b] | c[b + 1] | c[b + 2] | c[b + 3])
+            REXLOG_WARN("[posdiag]   in{} {} {} {} {} ({:08X} {:08X} {:08X} {:08X})", in, f(b), f(b + 1), f(b + 2),
+                        f(b + 3), c[b], c[b + 1], c[b + 2], c[b + 3]);
+        }
+        for (uint32_t r = 0; r < 64; ++r) {
+          const uint32_t b = 72 + r * 4;
+          REXLOG_WARN("[posdiag]   c{} {} {} {} {}", r, f(b), f(b + 1), f(b + 2), f(b + 3));
+        }
+      }
+    }
+  }
+#endif
   REXLOG_INFO("[renut] upload ring: {:.1f} MB cleaned (render-thread proposal 23); ranges cleaned by the cleaner "
               "thread {}, by the render thread {}; command lists submitted at a kick {} (banjo_deko3d_kick_submit)",
               double(g_ring_published.exchange(0, std::memory_order_relaxed)) / double(1u << 20),
@@ -1447,6 +1485,7 @@ void BeforeDeviceCreated() {
 }
 
 void OnDeviceCreated(plume::RenderDevice *device) {
+  g_render_device = device;  // mk9-nx (2026-10-21): the position diagnostics' reads
   if (device && ::renut::gpu::IsVulkan()) {
     const bool wanted = EnhancementActive(EnhancementGroup::kNonCpu, REXCVAR_GET(banjo_gpu_robustness_off));
     REXLOG_INFO("[renut] pipeline robustness (banjo_gpu_robustness_off): {}",

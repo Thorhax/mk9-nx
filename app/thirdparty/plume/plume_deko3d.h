@@ -348,6 +348,9 @@ namespace plume {
         DkIdxFormat indexFormat = DkIdxFormat_Uint16, boundIndexFormat = DkIdxFormat_Uint16;
         uint32_t indexSize = 2;
         DkGpuAddr indexAddress = 0;
+        // mk9-nx (2026-10-21): primitive restart as the GPU last got it (-1: not set in this list); see drawIndexedInstanced.
+        int restartEnabled = -1;
+        uint32_t restartIndex = 0;
         bool descriptorsInvalidated = false;
         uint64_t descriptorEpoch = 0;
         const Deko3DFramebuffer *framebuffer = nullptr;
@@ -538,6 +541,11 @@ namespace plume {
 
         // The push constant UBO (graphics stages; dkCmdBufPushConstants updates it in command order).
         DkMemBlock pushBlock = nullptr;
+        // mk9-nx (2026-10-21): tools/deko3d_diag_positions.py's buffer (storage binding 13), GPU-uncached so the CPU sees
+        // the vertex shaders' counts; bound in every list, read only by shaders built with that pass.
+        DkMemBlock posDiagBlock = nullptr;
+        DkGpuAddr posDiagAddr = 0;
+        static constexpr uint32_t PosDiagWords = 1028 + 72 + 256;  // counts, the per-shader table, the capture
         DkGpuAddr pushAddr = 0;
         static constexpr uint32_t PushSize = 256;
         // banjo-nx (2026-10-19, GPU): the texture size buffer (UBO binding 3: 64 uvec4, pixel bindings then vertex),
@@ -629,6 +637,9 @@ namespace plume {
     // banjo-nx: the vertex fetch data of the next draws (storage binding 15 of the graphics stages): size bytes from
     // address, which the shaders index from 0 (shader_common.h, g_DkAddressWindow).
     bool Deko3DBindFetchData(RenderCommandList *commandList, uint64_t address, uint32_t size);
+    // mk9-nx (2026-10-21): copies tools/deko3d_diag_positions.py's counts (Deko3DDevice::PosDiagWords words) into out and
+    // clears them; false when the device has no such buffer.
+    bool Deko3DTakePosDiag(RenderDevice *device, uint32_t *out, uint32_t words);
     // banjo-nx (2026-10-19, render-thread proposals 2 and 5): a uniform buffer the renderer keeps up to date with
     // pipelined updates (Deko3DPushUniform: dkCmdBufPushConstants; the draws before an update keep the old values), bound
     // at 'slot' for the graphics stages that read it; the update of 'size' bytes at 'offset' of the 'uboSize'-byte

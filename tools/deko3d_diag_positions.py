@@ -40,6 +40,29 @@ void banjoPosDiag(vec4 p)
     }
 }
 """
+WINDOW_CAPTURE = """            g_banjoPosDiag.w[CAPTURE + 3u] = 1u;
+            {
+                uint vid = uint(gl_VertexID) + g_UboShared.v[65u].w;
+                uint low = g_UboShared.v[35u].x;
+                g_banjoPosDiag.w[CAPTURE + 72u] = vid;
+                g_banjoPosDiag.w[CAPTURE + 73u] = low;
+                g_banjoPosDiag.w[CAPTURE + 74u] = uint(gl_VertexID);
+                for (uint e = 0u; e < 16u; e++)
+                {
+                    uvec4 el = g_UboShared.v[66u + e];
+                    uint b = CAPTURE + 76u + e * 10u;
+                    g_banjoPosDiag.w[b] = el.x; g_banjoPosDiag.w[b + 1u] = el.y;
+                    g_banjoPosDiag.w[b + 2u] = el.z; g_banjoPosDiag.w[b + 3u] = el.w;
+                    if (el.x < 96u)
+                    {
+                        uint slot = g_UboShared.v[36u + el.x / 4u][el.x % 4u];
+                        g_banjoPosDiag.w[b + 4u] = slot;
+                        uint at = (low + (slot & ~3u) + (vid * el.z + el.y) * 4u) / 4u;
+                        for (uint k = 0u; k < 4u; k++) g_banjoPosDiag.w[b + 5u + k] = g_DkAddressWindow._m0[at + k];
+                    }
+                }
+            }
+"""
 INPUT = re.compile(r'^layout\(location = \d+\) in (\w+) (in_var_\w+);', re.M)
 ASSIGN = re.compile(r'^(\s*)gl_Position = [^;]+;\s*$', re.M)
 
@@ -67,9 +90,15 @@ def main():
                 if conv:
                     inputs += (f'            for (uint c = 0u; c < 4u; c++) g_banjoPosDiag.w[CAPTURE + {8 + 4 * i}u + c] = '
                                f'floatBitsToUint(({conv})[c]);\n')
+            if 'g_DkAddressWindow' in text and 'g_UboShared' in text:
+                # Window shaders (vfetchBound / vfetchMemory, no vertex attributes): the vertex index, the window's
+                # offset and per bound element its descriptor, its stream's slot and the 4 words at the element.
+                inputs += WINDOW_CAPTURE
             decl = DECL % {'lo': h & 0xFFFFFFFF, 'hi': h >> 32, 'inputs': inputs}
             if 'g_UboVertex' not in text:
                 decl = decl.replace('g_UboVertex.v[r][c]', '0.0')
+            if WINDOW_CAPTURE in decl:
+                decl = decl.replace('for (uint r = 0u; r < 64u; r++)', 'for (uint r = 0u; r < 0u; r++)')
             text = text.replace('void main()', decl + '\nvoid main()', 1)
             text = ASSIGN.sub(lambda mm: mm.group(0).rstrip() + ' banjoPosDiag(gl_Position);', text)
 

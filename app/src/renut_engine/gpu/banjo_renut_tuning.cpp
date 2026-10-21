@@ -813,9 +813,19 @@ void StatsGameFrame() {
             REXLOG_WARN("[posdiag]   in{} {} {} {} {} ({:08X} {:08X} {:08X} {:08X})", in, f(b), f(b + 1), f(b + 2),
                         f(b + 3), c[b], c[b + 1], c[b + 2], c[b + 3]);
         }
-        for (uint32_t r = 0; r < 64; ++r) {
-          const uint32_t b = 72 + r * 4;
-          REXLOG_WARN("[posdiag]   c{} {} {} {} {}", r, f(b), f(b + 1), f(b + 2), f(b + 3));
+        if (c[3] == 1) {  // a window shader's capture: vertex index, window offset, the bound elements
+          REXLOG_WARN("[posdiag]   vertex {} (vertex id {}), window offset {:X}", c[72], c[74], c[73]);
+          for (uint32_t e = 0; e < 16; ++e) {
+            const uint32_t *x = c + 76 + e * 10;
+            if (x[0] | x[1] | x[2] | x[3])
+              REXLOG_WARN("[posdiag]   element {}: fetch {} offset {} stride {} type {:06X} slot {:08X} words {:08X} "
+                          "{:08X} {:08X} {:08X}", e, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8]);
+          }
+        } else {
+          for (uint32_t r = 0; r < 64; ++r) {
+            const uint32_t b = 72 + r * 4;
+            REXLOG_WARN("[posdiag]   c{} {} {} {} {}", r, f(b), f(b + 1), f(b + 2), f(b + 3));
+          }
         }
       }
     }

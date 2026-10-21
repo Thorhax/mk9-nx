@@ -2036,7 +2036,7 @@ def optimise(text, passes=DEFAULT, stage=None, name=None):
 
 
 UAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'out', 'deko3d_tools', 'uam-build',
-                   'uam.exe')
+                   'uam' + ('.exe' if os.name == 'nt' else ''))  # mk9-nx: no suffix on Linux
 
 
 def check_one(item):

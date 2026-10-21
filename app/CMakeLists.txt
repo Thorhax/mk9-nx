@@ -103,6 +103,11 @@ set_source_files_properties(src/cpu/sa2_enhancements.cpp PROPERTIES
 
 # Link the SDK. Stage 3 draws with ReXGlue's Xenos GPU emulation; the native renderer replaces it in stage 4.
 rexglue_setup_target(mk9 GPU_PLUGINS xenos)
+# An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
+# folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].
+if(REXGLUE_PLATFORM_SWITCH AND TARGET rexcore)
+    target_compile_definitions(rexcore PRIVATE REX_SWITCH_FALLBACK_EXE="/switch/mk9-nx/mk9.nro")
+endif()
 
 # SPIR-V initializers of the native renderer's EDRAM transfer / utility shaders (src/me/native/shaders), compiled
 # on the host with glslangValidator (built from the SDK's glslang into out/glslang: cmake -S sdk/thirdparty/glslang -B out/glslang, target glslangValidator). The Switch build

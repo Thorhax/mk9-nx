@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deko3d_glsl  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPIRV_CROSS = os.path.join(ROOT, 'out', 'deko3d_tools', 'spirv-cross-build', 'spirv-cross.exe')
-UAM = os.path.join(ROOT, 'out', 'deko3d_tools', 'uam-build', 'uam.exe')
+EXE = '.exe' if os.name == 'nt' else ''  # mk9-nx: the Linux builds have no suffix
+SPIRV_CROSS = os.path.join(ROOT, 'out', 'deko3d_tools', 'spirv-cross-build', 'spirv-cross' + EXE)
+UAM = os.path.join(ROOT, 'out', 'deko3d_tools', 'uam-build', 'uam' + EXE)
 NO_UAM = False
 
 

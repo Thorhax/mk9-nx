@@ -72,6 +72,13 @@ else()
     # The Linux binary finds libdxcompiler next to it.
     set(RENUT_DXC env "LD_LIBRARY_PATH=${RENUT_XENOS_RECOMP_DIR}/thirdparty/dxc-bin/lib/x64" "${RENUT_DXC_BIN_DIR}/dxc-linux")
 endif()
+# mk9-nx (2026-10-21): one path for tools that take DXC as a single argument (deko3d_host_shader.py); on Linux
+# dxc-linux finds its libraries itself (mk9-nx's tools/linux/hostrun.sh wrapper).
+if(CMAKE_HOST_WIN32)
+    set(RENUT_DXC_ONE "${RENUT_DXC}")
+else()
+    set(RENUT_DXC_ONE "${RENUT_DXC_BIN_DIR}/dxc-linux")
+endif()
 
 # renut_host_shader(<target> <stem> <profile>) compiles gpu/shaders/host/<stem>.hlsl
 # to SPIR-V (always) and DXIL (Windows), as headers exposing
@@ -115,7 +122,7 @@ function(renut_host_shader TARGET STEM PROFILE)
         add_custom_command(
             OUTPUT "${out}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${RENUT_GPU_GEN_DIR}/host_shaders"
-            COMMAND "${PYTHON_EXECUTABLE}" "${tool}" --dxc ${RENUT_DXC} --spirv-cross "${BANJO_DEKO3D_SPIRV_CROSS}"
+            COMMAND "${PYTHON_EXECUTABLE}" "${tool}" --dxc "${RENUT_DXC_ONE}" --spirv-cross "${BANJO_DEKO3D_SPIRV_CROSS}"
                     --uam "${BANJO_DEKO3D_UAM}" --profile ${PROFILE} --stem ${STEM} --src "${src}" --out "${out}"
             DEPENDS "${src}" ${host_includes} "${tool}" "${CMAKE_SOURCE_DIR}/../tools/deko3d_glsl.py"
             COMMENT "Compiling host shader ${STEM}.hlsl (${PROFILE}, deko3d)"

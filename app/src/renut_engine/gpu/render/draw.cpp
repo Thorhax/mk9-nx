@@ -2998,6 +2998,13 @@ const u32 *BoolSpecMask(const ShaderRecord *r) {
   return r->bool_spec_mask;
 }
 
+REXCVAR_DEFINE_BOOL(mk9_bound_fetch_spec, true, "MK9/Renderer",
+                    "Renut's renderer: the vertex shaders' bound fetches (vfetchBound) take their element type as a "
+                    "specialization constant from the pipeline key, so a shader keeps one format's decode instead of "
+                    "all of them (MK9's skinned vertex shaders: 800 KB of GLSL, 45 s of uam on a PC). Off: read at run "
+                    "time, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const ShaderRecord *ps,
                     const VertexDeclarationRecord *declaration, const Targets &t, u32 primitive,
                     bool per_instance, const u32 *booleans, u32 alpha_test_func) {
@@ -3021,6 +3028,21 @@ PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const Sha
   key.vertex_shader = vs->entry;
   key.pixel_shader = ps ? ps->entry : nullptr;
   key.layout_hash = declaration->layout_hash;
+  // mk9-nx (2026-10-21, mk9_bound_fetch_spec): the bound elements' types, as DescribeBoundFetches gives the shader.
+  if (REXCVAR_GET(mk9_bound_fetch_spec) && vs->entry) {
+    const ShaderVertexInput *inputs = g_shaderVertexInputs + vs->entry->vertexInputOffset;
+    const u32 count = std::min<u32>(vs->entry->vertexInputCount, kMaxBoundFetches);
+    for (u32 i = 0; i < count && i < 16; ++i) {
+      if (!(inputs[i].flags & kVertexInputBoundFetch))
+        continue;
+      for (const GuestVertexElement &e : declaration->elements) {
+        if (e.Usage == inputs[i].usage && e.UsageIndex == inputs[i].usageIndex && e.Stream < kMaxVertexStreams) {
+          key.bound_types[i] = (BoundDeclType(u32(e.Type)) & 0x3FFFFFu) + 1;
+          break;
+        }
+      }
+    }
+  }
   key.topology = Topology(primitive);
   key.color_count = t.color_count;
   for (uint32_t i = 0; i < t.color_count; ++i)

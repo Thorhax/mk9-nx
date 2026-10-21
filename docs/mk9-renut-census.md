@@ -90,3 +90,30 @@ MK9's private layout is SA2's with the bound objects and everything after them 1
   others should be internal draws (Clear, Resolve, Present) or a counting artefact; to check on the PC once Renut
   draws.
 - 18,880 shader containers (UE3), against SA2's 103: the shader table and the deko3d chain have to scale.
+
+## 2026-10-21: from the census to pictures (PC, Ryujinx)
+
+What MK9 needed beyond SA2's hooks, in the order it was found:
+
+- **Shader capture loop.** Renut writes every container its table lacks to `shader_capture/` (PC: out/pc; Switch:
+  `sdmc:/switch/mk9-nx/shader_capture`) and the next build adds them (cmake/collect_captured_shaders.cmake). The
+  disc scan (`out/ue3scan_v2`, 19,005 containers from `ue3_shader_scan`) is byte-identical to what MK9 registers:
+  7,037 of 7,042 runtime containers, all 526 of an emulator run's captures and 2,001 of 2,005 PC captures are in it
+  (the rest are Direct3D's own, in the runtime dump). So `out/renut_shader_dump` = runtime dump + the whole scan.
+- **COLOR2/COLOR3 interpolators** in reblue-XenosRecomp (135 of the first 5,075 shaders failed DXC without them).
+- **The query block** and two more allocation-only steps of MK9's hardware path (sub_82BF5F90: +24272..24288,
+  sub_82BF57A8, sub_82BEB450) in Renut's CreateDevice: a fight's load wrote the query slots at 0x10 without it.
+- **D3DVertexShader_Bind** (sub_82BFF878): UE3 binds its vertex shaders to their declarations and draws its screen
+  quads, text and post passes with no declaration set (+12120 = 0). Without the hook the shaders took their containers'
+  unpatched fetches and every draw but the movies' rasterised nothing.
+- **Gamma ramp**: MK9's table at +15280 is SA2's format (3 x 256 big-endian words, the 10-bit value << 6). The first
+  inverted picture came with every other draw missing; `sa2_renut_gamma_ramp` is off in the Switch defaults until it
+  is checked on a whole frame (todo).
+- **Bound fetches** (`mk9_bound_fetch_spec`): 82 of MK9's vertex shaders read declaration elements by an index other
+  than the vertex index (vfetchBound), and each such fetch inlined every vertex format's decode: up to 816 KB of
+  GLSL, 45 s of uam on a PC (a 233 KB binary). The element types are now specialization constants 1300-1315 from
+  `PipelineKey::bound_types` (pipeline list version 5, `tools/deko3d_variant_cache.py` reads them): 2.3 s, 54 KB.
+
+Emulator: Chansey's Ryubing fork (private, github ChanseyIsTheBest/ryujinx) runs the deko3d build to the main menu,
+character select and the VS screen (Eden 0.2.1 aborts on any deko3d device creation). Ryujinx refuses root: runs go
+through the unprivileged user `ryutest` (/home/ryutest), audio backend Dummy (no sound device here).

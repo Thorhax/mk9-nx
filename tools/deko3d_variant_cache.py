@@ -110,10 +110,11 @@ def read_cache(path):
 # samples, 4 blend controls, 9 more u32 fields (offset 108 on), bool_mask[8], bool_values[8], blend_skip, output_trim;
 # version 4 (2026-10-18) adds alpha_func at 180 (constant 903 + 1, banjo_deko3d_alpha_spec; version 3 had padding there)
 # and a reserved word.
-LIST_KEY_SIZES = {3: 184, 4: 192}
+LIST_KEY_SIZES = {3: 184, 4: 192, 5: 256}  # mk9-nx (2026-10-21): 5 adds bound_types[16] at 184
 LIST_KEY_SIZE = 184
 OFF_BOOL_MASK, OFF_BOOL_VALUES, OFF_BLEND_SKIP, OFF_OUTPUT_TRIM, OFF_ALPHA_FUNC = 108, 140, 172, 176, 180
 OFF_PER_INSTANCE, OFF_RECT_LIST, OFF_POINT_SPRITE = 96, 100, 104
+OFF_BOUND_TYPES = 184  # mk9-nx: constants 1300 + i = word - 1 when not 0
 OFF_DEPTH_CONTROL = 76  # banjo-nx (2026-10-19): RB_DEPTHCONTROL (constant 909, banjo_deko3d_early_z)
 OFF_STENCIL_REF_MASK = 80  # 2026-10-20: ref, read mask, write mask (bits 16-23)
 # Pseudo constants in a pipeline's spec (never a shader's id): a tessellated draw's, one with a geometry shader, and
@@ -226,9 +227,13 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
         alpha_func = struct.unpack_from('<I', data, at + OFF_ALPHA_FUNC)[0] if version >= 4 else 0
         per_instance, rect_list, point_sprite = struct.unpack_from('<III', data, at + OFF_PER_INSTANCE)
         depth_control, stencil_ref_mask = struct.unpack_from('<II', data, at + OFF_DEPTH_CONTROL)
+        bound = struct.unpack_from('<16I', data, at + OFF_BOUND_TYPES) if version >= 5 else (0,) * 16
         at += size
         tail = {FLAG_TESS: per_instance, FLAG_GS: rect_list | point_sprite,
                 FLAG_DEPTH_WRITES: depth_writes(depth_control, stencil_ref_mask)}
+        for i, word in enumerate(bound):  # mk9-nx: the generic pipeline keeps them too
+            if word:
+                tail[1300 + i] = word - 1
         if blend_skip and blend_skip_on:
             tail[900] = blend_skip
         if output_trim:

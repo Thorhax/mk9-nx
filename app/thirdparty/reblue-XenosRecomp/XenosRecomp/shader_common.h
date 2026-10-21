@@ -921,15 +921,44 @@ float4 vfetchMemory(uint slot, float indexValue, bool roundIndex, int offsetDwor
 // fetch index, y its offset and z the stream stride in dwords, w its D3DDECLTYPE (bits 0-5
 // format, 8 signed, 9 integer, 10-21 four 3-bit swizzles: 0-3 xyzw, 4 zero, 5 one).
 // slot = g_VertexFetchSlot(element.x).
-float4 vfetchBound(uint4 element, uint slot, float indexValue, bool roundIndex, bool signedRfMode, int expAdjust)
+// mk9-nx (2026-10-21): the bound element types as specialization constants 1300-1315 (vfetchBound). SPIR-V only.
+#ifdef __spirv__
+[[vk::constant_id(1300)]] const uint g_banjoBoundType0 = 0xFFFFFFFFu;
+[[vk::constant_id(1301)]] const uint g_banjoBoundType1 = 0xFFFFFFFFu;
+[[vk::constant_id(1302)]] const uint g_banjoBoundType2 = 0xFFFFFFFFu;
+[[vk::constant_id(1303)]] const uint g_banjoBoundType3 = 0xFFFFFFFFu;
+[[vk::constant_id(1304)]] const uint g_banjoBoundType4 = 0xFFFFFFFFu;
+[[vk::constant_id(1305)]] const uint g_banjoBoundType5 = 0xFFFFFFFFu;
+[[vk::constant_id(1306)]] const uint g_banjoBoundType6 = 0xFFFFFFFFu;
+[[vk::constant_id(1307)]] const uint g_banjoBoundType7 = 0xFFFFFFFFu;
+[[vk::constant_id(1308)]] const uint g_banjoBoundType8 = 0xFFFFFFFFu;
+[[vk::constant_id(1309)]] const uint g_banjoBoundType9 = 0xFFFFFFFFu;
+[[vk::constant_id(1310)]] const uint g_banjoBoundType10 = 0xFFFFFFFFu;
+[[vk::constant_id(1311)]] const uint g_banjoBoundType11 = 0xFFFFFFFFu;
+[[vk::constant_id(1312)]] const uint g_banjoBoundType12 = 0xFFFFFFFFu;
+[[vk::constant_id(1313)]] const uint g_banjoBoundType13 = 0xFFFFFFFFu;
+[[vk::constant_id(1314)]] const uint g_banjoBoundType14 = 0xFFFFFFFFu;
+[[vk::constant_id(1315)]] const uint g_banjoBoundType15 = 0xFFFFFFFFu;
+#define BANJO_BOUND_TYPE(i) g_banjoBoundType##i
+#else
+#define BANJO_BOUND_TYPE(i) 0xFFFFFFFFu
+#endif
+// mk9-nx (2026-10-21): 'specType' is element.w as a specialization constant (1300 + input, BANJO_BOUND_TYPE), set by
+// the renderer from the pipeline key (PipelineKey::bound_types: the bound declaration's element), 0xFFFFFFFF when not
+// specialised (the run-time word, as before). Each call inlines the decode of every vertex format: MK9's skinned vertex
+// shaders have 32 of them, 800 KB of GLSL that uam took 45 s for on a PC; with the type a constant only one format's
+// code is left.
+float4 vfetchBound(uint4 element, uint slot, float indexValue, bool roundIndex, bool signedRfMode, int expAdjust,
+    uint specType)
 {
+    const uint type = specType != 0xFFFFFFFFu ? specType : element.w;
     // banjo-nx: word by word (its offset and stride come from the draw's constants, not the call site).
-    float4 value = vfetchMemoryImpl(slot, indexValue, roundIndex, int(element.y), element.z, element.w & 0x3Fu,
-        (element.w & 0x100u) != 0, (element.w & 0x200u) != 0, signedRfMode, expAdjust, false, false, 0u);
+    float4 value = vfetchMemoryImpl(slot, indexValue, roundIndex, int(element.y), element.z, type & 0x3Fu,
+        (type & 0x100u) != 0, (type & 0x200u) != 0, signedRfMode, expAdjust, false, false, 0u);
     float4 result;
     [unroll] for (uint i = 0; i < 4; i++)
     {
-        uint swizzle = (element.w >> (10u + 3u * i)) & 7u;
+        uint swizzle = (type >> (10u + 3u * i)) & 7u;
         result[i] = swizzle < 4 ? value[swizzle] : (swizzle == 5 ? 1.0 : 0.0);
     }
     return result;

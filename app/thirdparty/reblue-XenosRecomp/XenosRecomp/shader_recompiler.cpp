@@ -275,7 +275,7 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
                 indent();
                 print("r{}.", instr.dstRegister);
                 printDstSwizzle(instr.dstSwizzle, false);
-                println(" = vfetchBound(g_BoundFetch({0}), g_VertexFetchSlot(g_BoundFetch({0}).x), r{1}.{2}, {3}, {4}, {5}).{6};",
+                println(" = vfetchBound(g_BoundFetch({0}), g_VertexFetchSlot(g_BoundFetch({0}).x), r{1}.{2}, {3}, {4}, {5}, BANJO_BOUND_TYPE({0})).{6};",
                     inputIndex, full.srcRegister, SWIZZLES[full.srcSwizzle], full.isIndexRounded ? "true" : "false",
                     instr.signedRfModeAll ? "true" : "false", int32_t(instr.expAdjust), sourceSwizzle);
             }

@@ -82,6 +82,11 @@ struct PipelineKey {
   // alpha_test_func; 8 = always, the test off), the pixel shader's specialization constant 903 (tools/deko3d_glsl_opt.py,
   // pass alpha); 0 = read at run time. Like the bools: a key with it not built yet draws with the generic one (0).
   uint32_t alpha_func;
+  // mk9-nx (2026-10-21, mk9_bound_fetch_spec): per vertex input the shader reads with vfetchBound (an element of the
+  // bound declaration read by another index), its D3DDECLTYPE word + 1 (SharedConstants.bound_fetch[i][3]), the vertex
+  // shader's specialization constant 1300 + i; 0 = read at run time. Fixed by the shader and the declaration, so the
+  // generic key a specialised one draws with keeps them.
+  uint32_t bound_types[16];
   uint32_t reserved;  // 0 (the key is compared and hashed as bytes)
 };
 

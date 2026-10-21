@@ -346,13 +346,18 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
 
   // banjo-nx (banjo_gpu_bool_spec): the key's bools as the shaders' specialization constants (banjo_bool_spec.h). One
   // list for every stage: a stage takes the ids it declares (vertex and pixel shader bools have distinct ones).
-  plume::RenderSpecConstant spec[272];  // 256 bools and 900-908
+  plume::RenderSpecConstant spec[288];  // 256 bools, 900-909 and (mk9-nx) 1300-1315
   uint32_t spec_count = 0;
   for (uint32_t w = 0; w < 8; ++w) {
     for (uint32_t m = key.bool_mask[w]; m; m &= m - 1) {
       const uint32_t b = uint32_t(std::countr_zero(m));
       spec[spec_count++] = plume::RenderSpecConstant(1000 + w * 32 + b, (key.bool_values[w] >> b) & 1u);
     }
+  }
+  // mk9-nx (2026-10-21, mk9_bound_fetch_spec): the bound elements' types the vertex shader's vfetchBound decodes.
+  for (uint32_t i = 0; i < 16; ++i) {
+    if (key.bound_types[i])
+      spec[spec_count++] = plume::RenderSpecConstant(1300 + i, key.bound_types[i] - 1);
   }
   // banjo-nx (banjo_gpu_blend_skip): the pixel shader's discard of pixels the blend would not change.
   if (key.blend_skip)
@@ -463,7 +468,7 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
 constexpr char kListMagic[4] = {'R', 'N', 'P', 'L'};
 // banjo-nx: 2, the key's bool words (banjo_gpu_bool_spec); 3, output_trim; 4, alpha_func (a version 3 list is kept,
 // LoadList).
-constexpr u32 kListVersion = 4;
+constexpr u32 kListVersion = 5;  // mk9-nx (2026-10-21): 5 adds PipelineKey::bound_types
 constexpr u32 kListV3KeySize = 184;  // the key up to output_trim
 
 struct ListHeader {

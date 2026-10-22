@@ -690,6 +690,11 @@ namespace plume {
         // waits for the work before it but keeps the texture cache: only a read after a write needs it invalidated,
         // and that read's own transition does it.
         bool leanBarriers = false;
+        // mk9-nx (2026-10-22, tests for the fights' triangles on hardware): 1 the GPU's L2 (and shader data caches)
+        // invalidated at each command list's start, 2 also before every draw whose shaders read the address window;
+        // rebindWindow: the address window bound again for every such draw.
+        int l2Invalidate = 0;
+        bool rebindWindow = false;
     };
     void Deko3DSetOptions(const Deko3DOptions &options);
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (barriers() reads it per call).

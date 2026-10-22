@@ -3039,6 +3039,19 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
     }
   }
   if (shared) {
+    // mk9-nx (2026-10-22, mk9_diag_bad_vertices): a canary in the allocation's 16 spare bytes after the copies (a
+    // serial, its complement, where it is), and the serial and position in SharedConstants' padding: the position
+    // diagnostics' window shaders check that the window holds it (tools/deko3d_diag_positions.py), i.e. that the GPU
+    // reads what the CPU wrote for this draw where the draw's slots point.
+    if (diag_slots) {
+      static u32 serial = 0;
+      if (++serial == 0)
+        serial = 1;
+      const u32 canary[4] = {serial, ~serial, u32(chunk_offset) + offset, 0x4D4B3943u};
+      std::memcpy(static_cast<u8 *>(alloc.cpu) + offset, canary, sizeof(canary));
+      std::memcpy(&sc.pad_1352[0], &canary[0], 4);
+      std::memcpy(&sc.pad_1352[1], &canary[2], 4);
+    }
     alloc.ref.offset = 0;
     alloc.gpu_address = alloc.gpu_address ? alloc.gpu_address - chunk_offset : 0;
     sc.vertex_fetch_data = alloc.gpu_address;

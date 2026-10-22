@@ -12,6 +12,7 @@
 #include <unistd.h>  // ftruncate (LoadCache)
 
 #include <fmt/format.h>
+#include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <zstd.h>
@@ -27,6 +28,15 @@
 // one, hence weak.
 extern const uint8_t g_deko3dGlslPackage[] __attribute__((weak));
 extern const size_t g_deko3dGlslPackageSize __attribute__((weak));
+
+// mk9-nx (2026-10-22): tests for the fights' triangles on the console (plume::Deko3DOptions).
+REXCVAR_DEFINE_INT32(mk9_deko3d_l2_invalidate, 0, "MK9/Renderer",
+                     "deko3d: 1 the GPU's L2 cache invalidated at each command list's start, 2 also before every draw "
+                     "whose shaders read vertex data through the address window (a test)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(mk9_deko3d_rebind_window, false, "MK9/Renderer",
+                    "deko3d: the address window (storage binding 15) bound again for every draw that reads it (a test)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace banjo::renut_gpu::deko3d {
 
@@ -294,6 +304,8 @@ void InstallShaderCache() {
   options.uamFlags = Deko3DUamFlags();
   options.mergeBarriers = Deko3DBarrierMergeOn();  // banjo-nx (2026-10-19, GPU)
   options.leanBarriers = Deko3DBarrierLeanOn();
+  options.l2Invalidate = REXCVAR_GET(mk9_deko3d_l2_invalidate);  // mk9-nx (2026-10-22)
+  options.rebindWindow = REXCVAR_GET(mk9_deko3d_rebind_window);
   // The uam thread on the background compile core, below the game's threads (2026-10-18).
   options.compileCore = Deko3DCompileCore();
   options.compilePriority = Deko3DCompilePriority();

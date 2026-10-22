@@ -63,6 +63,40 @@ WINDOW_CAPTURE = """            g_banjoPosDiag.w[CAPTURE + 3u] = 1u;
                 }
             }
 """
+# Window shaders, every vertex: the canary UploadVertexFetchData wrote after the draw's fetch copies (mk9_diag_bad_vertices;
+# its serial in SharedConstants' padding, v[84].z, its position in v[84].w). A window that does not hold it is counted
+# (word 2; word 3 counts the draws checked) and the first such vertex captured from word CANARY: the GPU read other bytes than the CPU wrote there.
+CANARY_DECL = """#define CANARY 1270u
+void banjoCanary()
+{
+    uvec4 cn = g_UboShared.v[84u];
+    if (cn.z == 0u)
+        return;
+    uint i = (g_UboShared.v[35u].x + cn.w) / 4u;
+    uint a = g_DkAddressWindow._m0[i];
+    uint b = g_DkAddressWindow._m0[i + 1u];
+    if (gl_VertexID == 0)
+        atomicAdd(g_banjoPosDiag.w[3], 1u);  // draws checked (their first vertex)
+    if (a == cn.z && b == ~cn.z)
+        return;
+    atomicAdd(g_banjoPosDiag.w[2], 1u);
+    if (atomicCompSwap(g_banjoPosDiag.w[CANARY], 0u, 1u) == 0u)
+    {
+        g_banjoPosDiag.w[CANARY + 1u] = %(lo)du;
+        g_banjoPosDiag.w[CANARY + 2u] = %(hi)du;
+        g_banjoPosDiag.w[CANARY + 3u] = cn.z;
+        g_banjoPosDiag.w[CANARY + 4u] = cn.w;
+        g_banjoPosDiag.w[CANARY + 5u] = a;
+        g_banjoPosDiag.w[CANARY + 6u] = b;
+        g_banjoPosDiag.w[CANARY + 7u] = g_DkAddressWindow._m0[i + 2u];
+        g_banjoPosDiag.w[CANARY + 8u] = g_DkAddressWindow._m0[i + 3u];
+        g_banjoPosDiag.w[CANARY + 9u] = g_UboShared.v[35u].x;
+        g_banjoPosDiag.w[CANARY + 10u] = uint(gl_VertexID);
+        g_banjoPosDiag.w[CANARY + 11u] = g_UboShared.v[66u].x;
+        g_banjoPosDiag.w[CANARY + 12u] = g_UboShared.v[36u + g_UboShared.v[66u].x / 4u][g_UboShared.v[66u].x %% 4u];
+    }
+}
+"""
 INPUT = re.compile(r'^layout\(location = \d+\) in (\w+) (in_var_\w+);', re.M)
 ASSIGN = re.compile(r'^(\s*)gl_Position = [^;]+;\s*$', re.M)
 
@@ -95,11 +129,16 @@ def main():
                 # offset and per bound element its descriptor, its stream's slot and the 4 words at the element.
                 inputs += WINDOW_CAPTURE
             decl = DECL % {'lo': h & 0xFFFFFFFF, 'hi': h >> 32, 'inputs': inputs}
+            window = WINDOW_CAPTURE in inputs
             if 'g_UboVertex' not in text:
                 decl = decl.replace('g_UboVertex.v[r][c]', '0.0')
             if WINDOW_CAPTURE in decl:
                 decl = decl.replace('for (uint r = 0u; r < 64u; r++)', 'for (uint r = 0u; r < 0u; r++)')
+            if window:
+                decl += CANARY_DECL % {'lo': h & 0xFFFFFFFF, 'hi': h >> 32}
             text = text.replace('void main()', decl + '\nvoid main()', 1)
+            if window:
+                text = re.sub(r'(void main\(\)\s*\{)', r'\1\n    banjoCanary();', text, count=1)
             text = ASSIGN.sub(lambda mm: mm.group(0).rstrip() + ' banjoPosDiag(gl_Position);', text)
 
             def ssbo(mm):

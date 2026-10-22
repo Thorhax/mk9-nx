@@ -151,7 +151,8 @@ namespace plume {
         boundImageSetObj = nullptr;
         texSizeValid = 0;
         // Whatever the GPU holds of descriptors and shader code from before is dropped.
-        dkCmdBufBarrier(cmd, DkBarrier_None, DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader);
+        dkCmdBufBarrier(cmd, DkBarrier_None, DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader |
+                                                 (g_deko3dOptions.l2Invalidate ? DkInvalidateFlags_L2Cache : 0u));
         descriptorEpoch = currentEpoch();
     }
 
@@ -294,8 +295,13 @@ namespace plume {
     // they changed.
     void Deko3DCommandList::bindGraphicsBuffers() {
         const Deko3DGraphicsPipeline *p = graphicsPipeline;
-        if ((p->ssboMask[0] | p->ssboMask[1] | p->ssboMask[2]) & (1u << AddressWindowSlot))
+        if ((p->ssboMask[0] | p->ssboMask[1] | p->ssboMask[2]) & (1u << AddressWindowSlot)) {
             ++statWindowDraws;
+            if (g_deko3dOptions.rebindWindow)
+                ssboBoundStages[AddressWindowSlot] = 0;
+            if (g_deko3dOptions.l2Invalidate >= 2)
+                dkCmdBufBarrier(cmd, DkBarrier_None, DkInvalidateFlags_Shader | DkInvalidateFlags_L2Cache);
+        }
         for (int st = 0; st < 3; st++) {
             const uint32_t stageBit = 1u << GraphicsStages[st];
             uint32_t ubo = p->uboMask[st] & graphicsUboValid;

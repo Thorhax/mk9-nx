@@ -790,8 +790,15 @@ void StatsGameFrame() {
   // whose output position was not finite or beyond 1e7 since the last report.
   if (g_render_device) {
     static uint32_t words[plume::Deko3DDevice::PosDiagWords];
-    if (plume::Deko3DTakePosDiag(g_render_device, words, plume::Deko3DDevice::PosDiagWords) && (words[0] | words[1])) {
-      REXLOG_WARN("[posdiag] {} vertices not finite, {} beyond 1e7", words[0], words[1]);
+    if (plume::Deko3DTakePosDiag(g_render_device, words, plume::Deko3DDevice::PosDiagWords) &&
+        (words[0] | words[1] | words[2] | words[3])) {
+      REXLOG_WARN("[posdiag] {} vertices not finite, {} beyond 1e7; {} window vertices without their draw's canary "
+                  "({} window draws checked)", words[0], words[1], words[2], words[3]);
+      // mk9-nx (2026-10-22): the first window vertex whose window lacked the canary (UploadVertexFetchData).
+      if (const uint32_t *k = words + 1270; k[0])
+        REXLOG_WARN("[posdiag] canary vs {:08X}{:08X}: expected serial {:08X} at {:X}, read {:08X} {:08X} {:08X} "
+                    "{:08X}; window offset {:X}, vertex id {}, element 0 fetch {} slot {:08X}",
+                    k[2], k[1], k[3], k[4], k[5], k[6], k[7], k[8], k[9], k[10], k[11], k[12]);
       for (uint32_t slot = 0; slot < 256; ++slot) {
         const uint32_t *e = words + 4 + slot * 4;
         if (e[2] | e[3])

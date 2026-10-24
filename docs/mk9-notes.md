@@ -383,3 +383,12 @@ skipped), and an unmap that fails as a range is retried page by page (a range un
 mapped, the suspected cause: a later chunk at that place then collides). Either one logs `[gm]` once with the first
 failure's details (the hang watch). Boot loops: 40 boots of the map fallback and 30 of both, no hang; neither fallback ran (the hang is ~1 in 25 boots,
 so not yet proven).
+
+## The soaks' remaining long frames were mostly the rig's network log (2026-10-25)
+SOAK8's main thread spent the long frames in sub_82741630 (UE3's game thread waiting for its rendering thread: while
+pending > limit, appSleep(0)), and the rendering thread was often inside spdlog's network sink (send). A 20-minute
+soak without log_network (rig/soak.sh with NONET=1 and the KN config, stats from the SD log): windows with a frame
+over 100 ms 44 -> 14 for the same 20 minutes. Every one of the 14 is at boot or menus or at a match change (with
+30-70 MB read and new files opened); minutes 9-19, all fighting, had none. Only 12 shaders compiled in SOAK8's 41
+minutes (PC-built cache), so background compiling of the bound-type variants was not done: nothing left to win.
+Measure hitches with NONET=1 from now on.

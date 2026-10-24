@@ -28,6 +28,7 @@ extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
 
 #if REX_PLATFORM_SWITCH
 extern "C" void RexSwitchDumpThreads(const char* reason);
+extern "C" size_t RexGmSvcState(char* out, size_t cap);  // sdk/src/core/guest_memory_switch.cpp
 #endif
 
 namespace mk9::hang_watch {
@@ -58,6 +59,14 @@ void Start() {
       char reason[96];
       std::snprintf(reason, sizeof(reason), "no frame presented for %lld s (frame %llu)",
                     static_cast<long long>(stalled_s), static_cast<unsigned long long>(frames));
+      // mk9-nx (2026-10-24): the guest-memory map calls, twice a second apart: a still count with a call in flight is
+      // a call stuck in the kernel, a climbing one a fault retrying a map that fails (RexGmFaultIn boot hang).
+      for (int i = 0; i < 2; ++i) {
+        char gm[256];
+        RexGmSvcState(gm, sizeof(gm));
+        REXLOG_WARN("[hang] guest memory svc: {}", gm);
+        if (i == 0) std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
       RexSwitchDumpThreads(reason);
       ++dumps;
       ++dumps_this_stall;

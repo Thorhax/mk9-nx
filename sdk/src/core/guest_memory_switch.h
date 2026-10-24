@@ -189,6 +189,12 @@ int RexGmProtectionMode(void);
  */
 uint32_t RexGmLastResult(void);
 
+/*
+ * mk9-nx (2026-10-24): the window's map/unmap calls, without the lock (a hang report runs while a stuck call holds
+ * it): call count, failures, and the call in flight with its age. Writes a line to `out`, returns its length.
+ */
+size_t RexGmSvcState(char* out, size_t cap);
+
 #define REX_GM_ERR_NOMEM    0xFFFF0001u  /* memalign of the backing store failed */
 #define REX_GM_ERR_NOCODEVA 0xFFFF0002u  /* no free space left in the code region */
 

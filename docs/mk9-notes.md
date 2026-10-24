@@ -314,3 +314,10 @@ went black, and the Desert's fog sheet (PS A5A86E249D16F0B7) depth-tested agains
 the fighters. `mk9_msaa_as_1x` (default on) makes them single-sample on the host and `sa2_renut_msaa` now defaults
 to 0. Both stages render as on PC; fights run 56-60 fps on the V1 (Courtyard (Night) 47 -> ~57).
 The resolve itself is still broken on deko3d if MSAA is ever wanted back.
+
+## RexGmFaultIn boot hang: instrumentation (2026-10-24)
+Seen once (mk9-logs/rig/hang10, frame 63, on the older clocks): main thread inside svcMapProcessMemory for 60+ s
+holding the guest-memory lock. The window's map/unmap calls now go through TracedSvc (guest_memory_switch.cpp) and
+the hang report logs `[hang] guest memory svc:` twice a second apart (call count, failures, the call in flight and its
+age): a still count = stuck in the kernel, a climbing one = a failing map retried. rig/bootloop.sh mk9_gmtrace 30 K0:
+0 hangs in 30 boots after the user's RAM voltage change.

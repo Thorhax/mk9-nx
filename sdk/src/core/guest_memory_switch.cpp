@@ -5,6 +5,7 @@
 #include "guest_memory_switch.h"
 
 #include <malloc.h>
+#include <stdio.h>
 #include <string.h>
 #include <switch.h>
 
@@ -23,6 +24,39 @@ constexpr size_t kPageSize  = 0x1000;
  * page table.
  */
 constexpr size_t kBlockSize = 0x200000;
+
+/*
+ * mk9-nx (2026-10-24): what the window's map and unmap calls are doing, readable without the lock. A boot hung once in
+ * ~25 with the main thread inside svcMapProcessMemory (RexGmFaultIn) for over 60 s holding the lock; the hang report
+ * (RexGmSvcState, app/src/mk9_hang_watch.cpp) prints the call in flight, its age and the call count, which tells a
+ * call stuck in the kernel (count still) from a fault retrying a map that fails (count climbing).
+ */
+std::atomic<uint64_t> g_svc_calls{0};
+std::atomic<uint64_t> g_svc_start{0};  /* armGetSystemTick() when the call in flight began; 0 = none */
+std::atomic<uint64_t> g_svc_dst{0};
+std::atomic<uint64_t> g_svc_src{0};
+std::atomic<uint64_t> g_svc_len{0};
+std::atomic<uint32_t> g_svc_unmap{0};
+std::atomic<uint32_t> g_svc_fails{0};
+std::atomic<uint32_t> g_svc_last_rc{0};
+
+Result TracedSvc(bool unmap, void* dst, Handle proc, u64 src, u64 len) {
+    g_svc_dst.store(reinterpret_cast<uint64_t>(dst), std::memory_order_relaxed);
+    g_svc_src.store(src, std::memory_order_relaxed);
+    g_svc_len.store(len, std::memory_order_relaxed);
+    g_svc_unmap.store(unmap, std::memory_order_relaxed);
+    g_svc_start.store(armGetSystemTick() | 1, std::memory_order_release);
+    const Result rc = unmap ? svcUnmapProcessMemory(dst, proc, src, len) : svcMapProcessMemory(dst, proc, src, len);
+    g_svc_start.store(0, std::memory_order_release);
+    g_svc_calls.fetch_add(1, std::memory_order_relaxed);
+    if (R_FAILED(rc)) {
+        g_svc_fails.fetch_add(1, std::memory_order_relaxed);
+        g_svc_last_rc.store(rc, std::memory_order_relaxed);
+    }
+    return rc;
+}
+Result TracedMap(void* dst, Handle proc, u64 src, u64 len) { return TracedSvc(false, dst, proc, src, len); }
+Result TracedUnmap(void* dst, Handle proc, u64 src, u64 len) { return TracedSvc(true, dst, proc, src, len); }
 
 constexpr size_t AlignDown(size_t v, size_t a) { return v & ~(a - 1); }
 constexpr size_t AlignUp(size_t v, size_t a) { return (v + a - 1) & ~(a - 1); }
@@ -232,7 +266,7 @@ bool ProtectWithPermissions(uint8_t* page, bool read_only) {
 void UnmapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
     if (g_read_only == ReadOnly::kSi) {
         /* No holes here: everything was mapped, watched or not. */
-        if (R_SUCCEEDED(svcUnmapProcessMemory(s.base + win_off, Proc(),
+        if (R_SUCCEEDED(TracedUnmap(s.base + win_off, Proc(),
                                               reinterpret_cast<u64>(src), len))) {
             s.mapped -= len;
         }
@@ -248,7 +282,7 @@ void UnmapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
             continue;
         }
         const size_t stop = (it != s.protection.end() && it->first < end) ? it->first : end;
-        if (R_SUCCEEDED(svcUnmapProcessMemory(s.base + cur, Proc(),
+        if (R_SUCCEEDED(TracedUnmap(s.base + cur, Proc(),
                                               reinterpret_cast<u64>(src + (cur - win_off)),
                                               stop - cur))) {
             s.mapped -= stop - cur;
@@ -264,7 +298,7 @@ void UnmapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
  */
 bool MapWindowRangeReadOnly(State& s, size_t win_off, uint8_t* src, size_t len) {
     const Result rc =
-        svcMapProcessMemory(s.base + win_off, Proc(), reinterpret_cast<u64>(src), len);
+        TracedMap(s.base + win_off, Proc(), reinterpret_cast<u64>(src), len);
     if (R_FAILED(rc)) {
         s.last_result = rc;
         return false;
@@ -296,7 +330,7 @@ bool MapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
             continue;
         }
         const size_t stop = (it != s.protection.end() && it->first < end) ? it->first : end;
-        const Result rc = svcMapProcessMemory(s.base + cur, Proc(),
+        const Result rc = TracedMap(s.base + cur, Proc(),
                                               reinterpret_cast<u64>(src + (cur - win_off)),
                                               stop - cur);
         if (R_FAILED(rc)) {
@@ -459,6 +493,23 @@ int RexGmProtectionMode(void) {
         case ReadOnly::kNo: return 2;
         default: return 0;
     }
+}
+
+size_t RexGmSvcState(char* out, size_t cap) {
+    const uint64_t start = g_svc_start.load(std::memory_order_acquire);
+    const uint64_t base = reinterpret_cast<uint64_t>(g_base_fast.load(std::memory_order_acquire));
+    const uint64_t age_ms = start ? armTicksToNs(armGetSystemTick() - start) / 1000000 : 0;
+    const int n = snprintf(out, cap,
+                           "calls %llu, failed %u (last rc 0x%X); in flight: %s, %llu ms, window+0x%llX <- 0x%llX, "
+                           "0x%llX bytes",
+                           (unsigned long long)g_svc_calls.load(std::memory_order_relaxed),
+                           g_svc_fails.load(std::memory_order_relaxed), g_svc_last_rc.load(std::memory_order_relaxed),
+                           start ? (g_svc_unmap.load(std::memory_order_relaxed) ? "unmap" : "map") : "none",
+                           (unsigned long long)age_ms,
+                           (unsigned long long)(g_svc_dst.load(std::memory_order_relaxed) - base),
+                           (unsigned long long)g_svc_src.load(std::memory_order_relaxed),
+                           (unsigned long long)g_svc_len.load(std::memory_order_relaxed));
+    return n < 0 ? 0 : std::min(static_cast<size_t>(n), cap ? cap - 1 : 0);
 }
 
 uint32_t RexGmLastResult(void) {
@@ -715,8 +766,8 @@ bool RexGmProtect(uint8_t* address, size_t length, RexGmAccess access, RexGmAcce
                      */
                     if (!ProtectWithPermissions(s.base + p, was)) {
                         const Result rc =
-                            was ? svcUnmapProcessMemory(s.base + p, Proc(), src, kPageSize)
-                                   : svcMapProcessMemory(s.base + p, Proc(), src, kPageSize);
+                            was ? TracedUnmap(s.base + p, Proc(), src, kPageSize)
+                                   : TracedMap(s.base + p, Proc(), src, kPageSize);
                         if (R_FAILED(rc)) {
                             s.last_result = rc;
                             return false;

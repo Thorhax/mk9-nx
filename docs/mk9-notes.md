@@ -321,3 +321,8 @@ holding the guest-memory lock. The window's map/unmap calls now go through Trace
 the hang report logs `[hang] guest memory svc:` twice a second apart (call count, failures, the call in flight and its
 age): a still count = stuck in the kernel, a climbing one = a failing map retried. rig/bootloop.sh mk9_gmtrace 30 K0:
 0 hangs in 30 boots after the user's RAM voltage change.
+
+## Desert and Courtyard checked against real footage (2026-10-24)
+The user compared with Xbox 360 gameplay: the Desert's thick sandstorm and Courtyard (Night)'s brighter look, as Renut
+draws them, are correct. The emulated renderer (sa2_renderer=xenos) is wrong on both (it lightens the Desert's haze
+and darkens the Courtyard), so it is not a reference for these stages.

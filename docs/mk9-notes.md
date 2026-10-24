@@ -288,3 +288,29 @@ Console (user's lowered V1 clocks: CPU 1785, GPU 806, RAM 1733), 90 s fights, tr
 | Arcade Ladder (Cage vs Raiden, lava stage) | ~35 (another stage) | 40.4 (min 26.5) |
 
 Screenshots clean in all three. The classic generated code is kept in out/generated_classic.
+
+## Stage sweep on the optimised build (2026-10-24)
+
+`rig/sweep.sh mk9_opt 0 19`: Practice, Arena Select DRIGHT x N, 20 s fights. 50-57 fps on most stages. Found:
+- **Desert (arena 4)**: the stage is covered by an opaque sand-coloured layer (the fighters too on the Switch). PC
+  Renut shows it as well; the emulated GPU (sa2_renderer=xenos) draws a light haze. The draw is a UE3 fog volume: PS
+  A5A86E249D16F0B7 / VS 0ECBA41F038CB58A, a 24-vertex cube (+-128) the VS places (c18-c21 local-to-view, c0-c3 the
+  projection, inverted depth: near 10, far ~10000), alpha 0.36 x (2(1 - W/SceneDepth))^2 x noise, scene depth from
+  the 1280x720 24_8_FLOAT resolve 400D09D0. Ruled out: the depth values (mk9_diag_dump_depth: 0.0011-0.034, sane),
+  the depth-words shortcuts, bool specialisation, chain reuse / snapshot deltas, the cull mode (mk9_diag_flip_cull_ps),
+  the literals (c253-c255 from the cache). Skipping the PS (mk9_diag_skip_ps) shows the stage. Next: the cube's
+  view-space placement / W against the emulated renderer.
+- **Rooftop stage (arena 14)**: a black patch on the foreground floor (also in a ladder fight there).
+- **Boot hang, 1 of ~25 boots**: the main thread inside svcMapProcessMemory (RexGmFaultIn -> MapChunkIntoView,
+  sdk/src/core/guest_memory_switch.cpp) for 60+ s holding the guest-memory mutex, another guest thread waiting for it
+  in RexGmQueryProtect (both in the data-abort handler). Dump: mk9-logs/rig/hang10/rex_crash.log.
+- New diagnostics (draw.cpp): mk9_diag_skip_ps, mk9_diag_trace_ps ([texlog]: fetch constants, PS/VS constants, mode
+  control), mk9_diag_flip_cull_ps, mk9_diag_dump_depth.
+
+## Single-sample host targets (2026-10-24)
+The game's fight targets (scene depth, shadow depth) are 2x. On deko3d the multisampled depth resolve
+(depth_resolve_ms) reads 0: Rooftop (Dawn)'s floor shader (PS 7FCAC75ED7FAD8ED) saw an all-zero shadow map and
+went black, and the Desert's fog sheet (PS A5A86E249D16F0B7) depth-tested against a zero scene depth and covered
+the fighters. `mk9_msaa_as_1x` (default on) makes them single-sample on the host and `sa2_renut_msaa` now defaults
+to 0. Both stages render as on PC; fights run 56-60 fps on the V1 (Courtyard (Night) 47 -> ~57).
+The resolve itself is still broken on deko3d if MSAA is ever wanted back.

@@ -29,9 +29,11 @@ REXCVAR_DEFINE_STRING(renut_resolution, "720p", "Nuts&Bolts/Graphics",
 // so Renut's multisampling (N&B's targets are multisampled: banjo-nx's resolves, depth resolves and readbacks of them)
 // never ran. The game's single-sample targets get this many samples on the host, as the native renderer's sa2_msaa did;
 // the game's resolves downsample them. Its 4x surfaces (Direct3D's fast Clear aliases) stay as they are.
-REXCVAR_DEFINE_INT32(sa2_renut_msaa, 2, "SA2/Renderer",
+// mk9-nx (2026-10-24): default 0. Multisampled depth resolves read 0 on deko3d (Rooftop (Dawn)'s black floor, the
+// Desert's sand over the fighters), so MK9 keeps every target single-sample; see mk9_msaa_as_1x.
+REXCVAR_DEFINE_INT32(sa2_renut_msaa, 0, "SA2/Renderer",
                      "Renut's renderer: multisample anti-aliasing of the game's single-sample render targets: 0 = off "
-                     "(the game's own), 2 = 2x (default), 4 = 4x, 8 = 8x. Smoother edges; each step costs more GPU time "
+                     "(the game's own, default), 2 = 2x, 4 = 4x, 8 = 8x. Smoother edges; each step costs more GPU time "
                      "and memory (8x: about 30 MB more for each 1280x720 target). Read at start")
     .range(0, 8)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -165,7 +167,16 @@ void RetireTarget(HostSurface &surface) {
   Video::RetireLocked(std::move(surface.texture));
 }
 
+// mk9-nx (2026-10-24, mk9_msaa_as_1x): see SampleCount.
+REXCVAR_DEFINE_BOOL(mk9_msaa_as_1x, true, "MK9/Renderer",
+                    "Renut's renderer: the game's 2x and 4x multisampled targets are single-sampled on the host (the "
+                    "fights' scene and shadow depth are 2x; their multisampled depth resolves read 0 on deko3d). Default on")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 plume::RenderSampleCounts SampleCount(u32 info_word) {
+  static const bool as_1x = REXCVAR_GET(mk9_msaa_as_1x);
+  if (as_1x)
+    return plume::RenderSampleCount::COUNT_1;
   switch ((info_word >> 16) & 3) {
   case 1:
     return plume::RenderSampleCount::COUNT_2;

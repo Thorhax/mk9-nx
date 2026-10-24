@@ -387,6 +387,13 @@ bool ReportDeviceLost(plume::RenderDevice *device) {
 #endif
 }
 
+#if defined(PLUME_DEKO3D)
+REXCVAR_DEFINE_INT32(mk9_deko3d_memory_budget_mb, 512, "MK9/Renderer",
+                     "deko3d: the GPU memory budget the texture policy works to (banjo_renut_textures_reserve_mb below "
+                     "it, the cold textures go). 0: none (nothing released for memory)")
+    .range(0, 4096);
+#endif
+
 GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
   GpuMemoryUsage usage;
   if (!device)
@@ -396,7 +403,9 @@ GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
     // deko3d: what the back end made (one memory on the Switch: all of it counts as local).
     const plume::Deko3DStats &st = plume::GetDeko3DStats();
     usage.local_used = st.imageBytes + st.bufferBytes + st.codeBytes + st.commandBytes;
-    usage.local_budget = 0;
+    // mk9-nx (2026-10-25): a budget, so the memory policy can release cold textures (with 0 nothing ever went: MK9's
+    // host textures grew 43 -> 301 MB over a 41-minute soak, every stage and fighter seen kept, the heap 1.7 -> 2.2 GB).
+    usage.local_budget = uint64_t(REXCVAR_GET(mk9_deko3d_memory_budget_mb)) << 20;
     usage.valid = true;
     return usage;
   }

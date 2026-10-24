@@ -365,3 +365,21 @@ not fold the switch at all (25.8 KB of code -> 12 KB), so the GPU runs less code
 519 -> 275 ms on average. Cache keys stay those of the whole text (old caches stay valid).
 Also: each 500 ms gate watchdog opening is logged ([mk9] gate watchdog), a suspect for the rare triangle flashes the
 user still sees (1-3 openings a run).
+
+## GPU memory budget on deko3d (2026-10-25)
+QueryGpuMemory reported a budget of 0 on deko3d, so the texture policy never released anything: in a 41-minute soak
+(rig/soak.sh) the host textures grew 43 -> 301 MB (1,564 kept) and the heap 1.7 -> 2.2 GB, stepping up with each new
+stage and fighter. `mk9_deko3d_memory_budget_mb` (default 512) is now the budget; below banjo_renut_textures_reserve_mb
+(192) left, cold textures go. Buffers, code and command memory take ~180 MB, so 400 kept textures at ~70 MB and the
+heap flat at 1.98 GB from minute 28 to 41 (SOAK7), at a price: re-uploads, 109 five-second windows with a frame over
+100 ms against 75. 512 is the middle (SOAK8): the heap level at 2.06 GB from minute 28, textures at most 145 MB,
+94 such windows, fights 57-60 fps.
+
+## Boot hang: page-by-page fallbacks (2026-10-25)
+The rare boot hang (SOAK6, frame 105): a chunk's map into a view failed with 0xD401 (InvalidCurrentMemory) and every
+access to it then went through the fault handler's emulation (74k SVCs, 73k failed). Two fallbacks in
+guest_memory_switch.cpp: RexGmFaultIn maps a chunk page by page when the whole map fails (pages already mapped are
+skipped), and an unmap that fails as a range is retried page by page (a range unmap failing whole left every page of it
+mapped, the suspected cause: a later chunk at that place then collides). Either one logs `[gm]` once with the first
+failure's details (the hang watch). Boot loops: 40 boots of the map fallback and 30 of both, no hang; neither fallback ran (the hang is ~1 in 25 boots,
+so not yet proven).

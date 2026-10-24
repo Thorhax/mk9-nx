@@ -263,13 +263,31 @@ bool ProtectWithPermissions(uint8_t* page, bool read_only) {
     g_read_only = ReadOnly::kSi;
     return true;
 }
+/*
+ * mk9-nx (2026-10-25): one unmap call for the range; if it fails (one page of it not mapped as the call expects), the
+ * pages go one by one so the rest are not left mapped. A page left behind made a later chunk's map at that place fail
+ * (0xD401), the suspected start of the rare boot hang. Failed page unmaps are counted for RexGmSvcState.
+ */
+std::atomic<uint64_t> g_unmap_page_fallbacks{0}, g_unmap_page_failures{0};
+
+void UnmapRangeOrPages(State& s, size_t win_off, uint8_t* src, size_t len) {
+    if (R_SUCCEEDED(TracedUnmap(s.base + win_off, Proc(), reinterpret_cast<u64>(src), len))) {
+        s.mapped -= len;
+        return;
+    }
+    g_unmap_page_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    for (size_t p = 0; p < len; p += kPageSize) {
+        if (R_SUCCEEDED(TracedUnmap(s.base + win_off + p, Proc(), reinterpret_cast<u64>(src + p), kPageSize)))
+            s.mapped -= kPageSize;
+        else
+            g_unmap_page_failures.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void UnmapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
     if (g_read_only == ReadOnly::kSi) {
         /* No holes here: everything was mapped, watched or not. */
-        if (R_SUCCEEDED(TracedUnmap(s.base + win_off, Proc(),
-                                              reinterpret_cast<u64>(src), len))) {
-            s.mapped -= len;
-        }
+        UnmapRangeOrPages(s, win_off, src, len);
         return;
     }
     const size_t end = win_off + len;
@@ -282,11 +300,7 @@ void UnmapWindowRange(State& s, size_t win_off, uint8_t* src, size_t len) {
             continue;
         }
         const size_t stop = (it != s.protection.end() && it->first < end) ? it->first : end;
-        if (R_SUCCEEDED(TracedUnmap(s.base + cur, Proc(),
-                                              reinterpret_cast<u64>(src + (cur - win_off)),
-                                              stop - cur))) {
-            s.mapped -= stop - cur;
-        }
+        UnmapRangeOrPages(s, cur, src + (cur - win_off), stop - cur);
         cur = stop;
     }
 }
@@ -376,6 +390,48 @@ bool MapChunkIntoView(State& s, size_t view_index, const Chunk& c) {
     if (!MapWindowRange(s, win_off, src, hi - lo)) return false;
     s.view_mapped.insert({view_index, c.offset});
     return true;
+}
+
+/*
+ * mk9-nx (2026-10-25): the rare boot hang. A chunk's mapping into a view failed with 0xD401 (InvalidCurrentMemory:
+ * part of the destination already mapped), so FaultIn answered no and the handler emulated the access through the
+ * shadow; every following access to the chunk faulted again (1,200 failed maps a second, the game frozen at boot
+ * frame 63-105, 1 boot in ~25). Here the chunk goes in page by page, skipping protected pages and those already
+ * mapped, and is then counted as in the view. The first failure's details go to RexGmSvcState for the root cause.
+ */
+std::atomic<uint64_t> g_pagewise_runs{0};
+char g_first_failure[200];
+std::atomic<bool> g_first_failure_set{false};
+
+bool MapChunkIntoViewPagewise(State& s, size_t view_index, const Chunk& c, size_t fault_win_off) {
+    const View& v = s.views[view_index];
+    size_t lo, hi;
+    if (!Intersect(c.offset, c.length, v.offset, v.length, &lo, &hi)) return false;
+    const size_t win_off = static_cast<size_t>(v.base - s.base) + (lo - v.offset);
+    uint8_t* src = static_cast<uint8_t*>(c.shadow) + (lo - c.offset);
+    const uint32_t first_rc = s.last_result;
+    size_t mapped = 0, skipped = 0;
+    bool fault_page_ok = false;
+    for (size_t p = 0; p < hi - lo; p += kPageSize) {
+        if (s.protection.count(win_off + p)) continue;
+        if (R_SUCCEEDED(TracedMap(s.base + win_off + p, Proc(), reinterpret_cast<u64>(src + p), kPageSize))) {
+            s.mapped += kPageSize;
+            mapped++;
+            if (win_off + p == AlignDown(fault_win_off, kPageSize)) fault_page_ok = true;
+        } else {
+            skipped++;  /* already mapped (the overlap) */
+        }
+    }
+    g_pagewise_runs.fetch_add(1, std::memory_order_relaxed);
+    if (!g_first_failure_set.exchange(true))
+        snprintf(g_first_failure, sizeof(g_first_failure),
+                 "first chunk-map failure rc 0x%X: view %zu (window+0x%zX, offset 0x%zX, 0x%zX bytes), chunk 0x%zX "
+                 "(0x%zX bytes), range window+0x%zX 0x%zX bytes: %zu pages mapped one by one, %zu already there",
+                 first_rc, view_index, static_cast<size_t>(v.base - s.base), v.offset, v.length, c.offset, c.length,
+                 win_off, hi - lo, mapped, skipped);
+    s.view_mapped.insert({view_index, c.offset});
+    (void)fault_page_ok;
+    return mapped > 0 || skipped > 0;
 }
 
 void UnmapChunkFromViews(State& s, const Chunk& c) {
@@ -509,7 +565,19 @@ size_t RexGmSvcState(char* out, size_t cap) {
                            (unsigned long long)(g_svc_dst.load(std::memory_order_relaxed) - base),
                            (unsigned long long)g_svc_src.load(std::memory_order_relaxed),
                            (unsigned long long)g_svc_len.load(std::memory_order_relaxed));
-    return n < 0 ? 0 : std::min(static_cast<size_t>(n), cap ? cap - 1 : 0);
+    size_t len = n < 0 ? 0 : std::min(static_cast<size_t>(n), cap ? cap - 1 : 0);
+    if (g_unmap_page_fallbacks.load(std::memory_order_relaxed) && len + 8 < cap) {
+        const int m = snprintf(out + len, cap - len, "; unmaps page by page %llu (%llu pages failed)",
+                               (unsigned long long)g_unmap_page_fallbacks.load(std::memory_order_relaxed),
+                               (unsigned long long)g_unmap_page_failures.load(std::memory_order_relaxed));
+        if (m > 0) len = std::min(cap - 1, len + static_cast<size_t>(m));
+    }
+    if (g_first_failure_set.load(std::memory_order_acquire) && len + 8 < cap) {
+        const int m = snprintf(out + len, cap - len, "; pagewise %llu: %s",
+                               (unsigned long long)g_pagewise_runs.load(std::memory_order_relaxed), g_first_failure);
+        if (m > 0) len = std::min(cap - 1, len + static_cast<size_t>(m));
+    }
+    return len;
 }
 
 uint32_t RexGmLastResult(void) {
@@ -671,7 +739,8 @@ bool RexGmFaultIn(uint64_t window_address) {
     Chunk* c = ChunkAt(s, off);
     if (!c) return false;                                       /* not committed */
     if (s.view_mapped.count({vi, c->offset}) != 0) return false; /* already there */
-    return MapChunkIntoView(s, vi, *c);
+    if (MapChunkIntoView(s, vi, *c)) return true;
+    return MapChunkIntoViewPagewise(s, vi, *c, win_off);
 }
 
 bool RexGmDecommit(size_t offset, size_t length) {

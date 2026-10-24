@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 
 #include <rex/cvar.h>
@@ -45,6 +46,16 @@ void Start() {
     int dumps = 0, dumps_this_stall = 0;
     while (dumps < 4) {
       std::this_thread::sleep_for(std::chrono::seconds(1));
+      {
+        // mk9-nx (2026-10-25): the guest memory fallback (a chunk mapped page by page after a failed map, the boot
+        // hang's cause) reported the first time it runs.
+        static bool reported = false;
+        char gm[512];
+        if (!reported && RexGmSvcState(gm, sizeof(gm)) && (std::strstr(gm, "pagewise") || std::strstr(gm, "unmaps page by page"))) {
+          reported = true;
+          REXLOG_WARN("[gm] guest memory: {}", gm);
+        }
+      }
       const uint64_t frames = g_mk9_game_frames.load(std::memory_order_relaxed);
       const auto now = clock::now();
       if (frames != last_frames || frames == 0) {  // nothing before the first frame: startup is not a hang

@@ -71,6 +71,82 @@ def variant_text(glsl, defines):
     return glsl[:nl + 1] + defines + glsl[nl + 1:]
 
 
+# mk9-nx (2026-10-25): the console's pruneBoundFetch (plume_deko3d.cpp), so a cache compiled here holds the same code
+# as one the console compiles: a vertex variant's switch (_N & 63u) over the vertex formats, _N = g_banjoBoundTypeK, keeps
+# only the case its constant SPIRV_CROSS_CONSTANT_ID_(1300 + K) selects (and default). The key stays the whole text's.
+# Without it the cache had the full switches, which Mesa leaves in the code unless the format is the first case (GPU
+# 11-12 ms a fight frame on the console against 9-10).
+ASSIGN_RE = re.compile(r'(_\d+) = g_banjoBoundType(\d+);')
+SWITCH_RE = re.compile(r'switch \((_\d+) & 63u\)\s*\{')
+LABEL_RE = re.compile(r'\s*(case (\d+)u:|default:)')
+BLOCK_RE = re.compile(r'\s*\{')
+
+
+def _match_brace(s, i):
+    d = 0
+    for j in range(i, len(s)):
+        if s[j] == '{':
+            d += 1
+        elif s[j] == '}':
+            d -= 1
+            if d == 0:
+                return j
+    return -1
+
+
+def prune_bound_fetch(src, values):
+    fixed = {}
+    for m in ASSIGN_RE.finditer(src):
+        v = values.get(1300 + int(m.group(2)))
+        if v is not None and v != 0xFFFFFFFF:
+            fixed[m.group(1)] = v & 63
+    if not fixed:
+        return src
+    out, pos = [], 0
+    for m in SWITCH_RE.finditer(src):
+        if m.start() < pos or m.group(1) not in fixed:
+            continue
+        want = fixed[m.group(1)]
+        ob = m.end() - 1
+        cb = _match_brace(src, ob)
+        if cb < 0:
+            continue
+        body = src[ob + 1:cb]
+        i, kept, labels, ok = 0, [], [], True
+        while i < len(body):
+            lm = LABEL_RE.match(body, i)
+            if lm:
+                labels.append(-1 if lm.group(2) is None else int(lm.group(2)))
+                i = lm.end()
+                continue
+            bm = BLOCK_RE.match(body, i)
+            if bm and labels:
+                bo = bm.end() - 1
+                bc = _match_brace(body, bo)
+                if bc < 0:
+                    ok = False
+                    break
+                keep = [l for l in labels if l == -1 or l == want]
+                if keep:
+                    kept.append(''.join('\n        default:' if l == -1 else f'\n        case {l}u:' for l in keep) +
+                                body[bo:bc + 1])
+                labels, i = [], bc + 1
+                continue
+            if body[i:].strip() == '':
+                break
+            ok = False
+            break
+        if not ok or labels:
+            continue
+        out.append(src[pos:ob + 1])
+        out.append(''.join(kept) + '\n    ')
+        pos = cb
+    if pos == 0:
+        return src
+    out.append(src[pos:])
+    return ''.join(out)
+
+
 def compile_one(item):
     key, stage, text = item
     if callable(text):
@@ -369,7 +445,9 @@ def main():
                 if key is None:
                     key = fnv1a64(variant_text(shader[0], defines).encode('utf-8'))
                 memo_new[mk] = key
-                todo.setdefault(key, (key, stage, lambda g=shader[0], d=defines: variant_text(g, d).encode('utf-8')))
+                todo.setdefault(key, (key, stage, lambda g=shader[0], d=defines, v=dict(sspec), vert=stage == 'vert':
+                                      (prune_bound_fetch(variant_text(g, d), v) if vert else variant_text(g, d))
+                                      .encode('utf-8')))
     os.makedirs(os.path.dirname(memo_path), exist_ok=True)
     json.dump(dict(memo, **memo_new), open(memo_path + '.tmp', 'w', encoding='utf-8'))
     os.replace(memo_path + '.tmp', memo_path)

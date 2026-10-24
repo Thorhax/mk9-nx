@@ -124,7 +124,17 @@ uint64_t g_gate = 0;
 uint64_t g_gate_watchdog_opens = 0, g_gate_wait_opens = 0;
 // Only for a wait nothing opens the gate for (none seen): the console's fights run 55 ms frames, and a 50 ms watchdog
 // opened the gate in the last ms of one frame in three, while the game was writing the particles.
-constexpr std::chrono::milliseconds kGateWatchdog{500};
+// mk9-nx (2026-10-25): mk9_gate_watchdog_ms (the user still sees rare triangle flashes; the openings come at screen
+// changes, 500-600 ms frames, when the render thread then records draws the game may still be writing).
+REXCVAR_DEFINE_INT32(mk9_gate_watchdog_ms, 500, "MK9/Renderer",
+                     "mk9_record_after_swap: work behind the gate runs anyway after this many ms without a Swap or a "
+                     "waiter (a safety valve)")
+    .range(50, 60000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+std::chrono::milliseconds GateWatchdog() {
+  static const std::chrono::milliseconds ms{REXCVAR_GET(mk9_gate_watchdog_ms)};
+  return ms;
+}
 // mk9-nx (2026-10-24): the game threads' waits for the render thread (fence waits, the Swap's), for the gate's cost.
 uint64_t g_fence_wait_us = 0, g_fence_waits = 0, g_swap_wait_us = 0;
 bool GateOn() {
@@ -201,7 +211,7 @@ void Run() {
         const Clock::time_point since = Clock::now();
         while (RunnableLocked() == 0 && !g_stopping) {
           g_work_cv.wait_for(lock, std::chrono::milliseconds(2));
-          if (RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - since > kGateWatchdog) {
+          if (RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - since > GateWatchdog()) {
             // mk9-nx (2026-10-24): each opening logged (rare: 1-3 a run) to see whether the remaining triangle
             // flashes follow them: the render thread then records draws whose data the game may still be writing.
             RGPU_WARN("[mk9] gate watchdog: {} items queued behind the gate, frame {} queued / {} done", g_queue.size(),

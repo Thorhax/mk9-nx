@@ -269,3 +269,22 @@ Sub-Zero, seeded inputs; the ladder's random stages had made every earlier A/B m
   off, 11.1 with 0.1.5 (game-thread bound: GPU 13 ms, render thread 6 ms, ~90 ms frames); an Arcade Ladder fight
   (Cage vs Jax) ~35. The game threads never wait for the render thread in a fight (0 fence waits, 0 ms at the
   Swap), gate on or off. Practice's red limbs are Practice Options > Collision Region (on by default), not a bug.
+
+## Optimised codegen: the fights from 11 to 47-54 fps on the Switch (2026-10-24)
+
+Console profile (switch_profile_stacks = true, Courtyard (Night) practice, 10.9 fps): the guest main thread used 28 %
+of its core; a quarter of its samples waited in pthread_mutex_lock on the codegen's global lock (mtmsrd r13 ->
+REX_ENTER_GLOBAL_LOCK, 669 sites in the classic code), against UE3's worker threads doing the same, and 15 % in
+NtWaitForSingleObject. The same wall as USF4 0.5.5. MK9 was still on the classic codegen; `tools/codegen.sh --flavor
+optimised` (perf_overrides.toml: skip_msr, registers as locals, no-volatile loads/stores + loop barriers, direct calls)
+leaves no global lock. sa2_renut_core_layout = false (main thread off its own core) gave only +0.5 fps.
+
+Console (user's lowered V1 clocks: CPU 1785, GPU 806, RAM 1733), 90 s fights, triangles fix on:
+
+| Scene | classic | optimised |
+|---|---|---|
+| Courtyard (Night), practice | 10.9 | 47.2 (min 44.7) |
+| The Dead Pool, practice | 18.3 | 53.6 (min 49.5) |
+| Arcade Ladder (Cage vs Raiden, lava stage) | ~35 (another stage) | 40.4 (min 26.5) |
+
+Screenshots clean in all three. The classic generated code is kept in out/generated_classic.

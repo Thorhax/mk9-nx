@@ -1490,6 +1490,125 @@ namespace plume {
         return true;
     }
 
+    // mk9-nx (2026-10-24): a vertex variant's fetch code, cut to the formats it fixes. Renut's vertex shaders decode
+    // each stream with a switch over every vertex format (switch (_N & 63u), _N = g_banjoBoundTypeK, the constant
+    // SPIRV_CROSS_CONSTANT_ID_(1300 + K)); MK9's largest are 830 KB of GLSL and took ~2.3 s each to compile on the
+    // console, mid-fight the first time an effect appeared (an 8 s freeze in a soak). With the constant set, only one
+    // case can run: the others are dropped before compiling (default kept). Same DKSH (uam on the PC: byte-identical,
+    // 0.71 -> 0.32 s for an 830 -> 210 KB shader). Any shape it does not recognise is left as it is.
+    static std::string pruneBoundFetch(const std::string &src, const std::unordered_map<uint32_t, uint32_t> &values) {
+        if (values.empty())
+            return src;
+        auto isDigit = [](char c) { return c >= '0' && c <= '9'; };
+        // _N = g_banjoBoundTypeK;
+        std::unordered_map<std::string, uint32_t> fixed;  // variable -> format
+        static const char kAssign[] = " = g_banjoBoundType";
+        for (size_t p = src.find(kAssign); p != std::string::npos; p = src.find(kAssign, p + 1)) {
+            size_t b = p;
+            while (b > 0 && (isDigit(src[b - 1]) || src[b - 1] == '_'))
+                b--;
+            size_t e = p + sizeof(kAssign) - 1, k = e;
+            while (k < src.size() && isDigit(src[k]))
+                k++;
+            if (b == p || k == e || k >= src.size() || src[k] != ';')
+                continue;
+            auto it = values.find(1300u + uint32_t(strtoul(src.c_str() + e, nullptr, 10)));
+            if (it != values.end() && it->second != 0xFFFFFFFFu)
+                fixed[src.substr(b, p - b)] = it->second & 63u;
+        }
+        if (fixed.empty())
+            return src;
+        auto matchBrace = [&](size_t open) -> size_t {
+            int depth = 0;
+            for (size_t j = open; j < src.size(); j++) {
+                if (src[j] == '{')
+                    depth++;
+                else if (src[j] == '}' && --depth == 0)
+                    return j;
+            }
+            return std::string::npos;
+        };
+        auto skipSpace = [&](size_t j) {
+            while (j < src.size() && (src[j] == ' ' || src[j] == '\n' || src[j] == '\r' || src[j] == '\t'))
+                j++;
+            return j;
+        };
+        std::string out;
+        out.reserve(src.size());
+        size_t pos = 0;
+        static const char kSwitch[] = "switch (";
+        for (size_t p = src.find(kSwitch, pos); p != std::string::npos; p = src.find(kSwitch, p + 1)) {
+            if (p < pos)
+                continue;
+            const size_t v = p + sizeof(kSwitch) - 1;
+            const size_t amp = src.find(" & 63u)", v);
+            if (amp == std::string::npos || amp - v > 16)
+                continue;
+            auto f = fixed.find(src.substr(v, amp - v));
+            if (f == fixed.end())
+                continue;
+            const size_t open = skipSpace(amp + 7);
+            if (open >= src.size() || src[open] != '{')
+                continue;
+            const size_t close = matchBrace(open);
+            if (close == std::string::npos)
+                continue;
+            // Groups of labels (case Nu: / default:) each followed by its { block }.
+            std::string kept;
+            std::vector<int64_t> labels;  // -1 = default
+            bool ok = true;
+            for (size_t j = skipSpace(open + 1); j < close; j = skipSpace(j)) {
+                if (src.compare(j, 5, "case ") == 0) {
+                    size_t k = j + 5, d = k;
+                    while (k < close && isDigit(src[k]))
+                        k++;
+                    if (k == d || src.compare(k, 2, "u:") != 0) {
+                        ok = false;
+                        break;
+                    }
+                    labels.push_back(int64_t(strtoul(src.c_str() + d, nullptr, 10)));
+                    j = k + 2;
+                }
+                else if (src.compare(j, 8, "default:") == 0) {
+                    labels.push_back(-1);
+                    j += 8;
+                }
+                else if (src[j] == '{' && !labels.empty()) {
+                    const size_t end = matchBrace(j);
+                    if (end == std::string::npos || end > close) {
+                        ok = false;
+                        break;
+                    }
+                    bool any = false;
+                    for (int64_t l : labels) {
+                        if (l == -1 || l == int64_t(f->second)) {
+                            kept += l == -1 ? "\n        default:" : "\n        case " + std::to_string(l) + "u:";
+                            any = true;
+                        }
+                    }
+                    if (any)
+                        kept.append(src, j, end + 1 - j);
+                    labels.clear();
+                    j = end + 1;
+                }
+                else {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok || !labels.empty())
+                continue;
+            out.append(src, pos, open + 1 - pos);
+            out += kept;
+            out += "\n    ";
+            pos = close;
+        }
+        if (pos == 0)
+            return src;
+        out.append(src, pos, std::string::npos);
+        return out;
+    }
+
     const DkShader *Deko3DDevice::loadVariant(const Deko3DShader *base, const RenderSpecConstant *specConstants, uint32_t specConstantsCount) {
         Deko3DShaderImpl *shader = const_cast<Deko3DShaderImpl *>(static_cast<const Deko3DShaderImpl *>(base));
         // The constants this shader has whose value differs from its default, by id.
@@ -1525,7 +1644,7 @@ namespace plume {
             source += defines;
             source.append(shader->glsl, nl + 1, std::string::npos);
         }
-        const uint64_t key = fnv1a64(source.data(), source.size());
+        const uint64_t key = fnv1a64(source.data(), source.size());  // of the whole text: caches stay valid
         Deko3DShaderVariant *variant = nullptr;
         {
             std::lock_guard<std::mutex> lock(variantMutex);
@@ -1548,7 +1667,19 @@ namespace plume {
                 std::string log;
                 // mk9-nx (2026-10-24, fastFirstCompile): only a pixel shader's compile has alternatives to skip.
                 const bool fast = g_deko3dOptions.fastFirstCompile && shader->stage == DkStage_Fragment;
-                if (!compile(shader->stage, source, dksh, log, fast)) {
+                std::string compiled = source;
+                if (shader->stage == DkStage_Vertex) {
+                    std::unordered_map<uint32_t, uint32_t> values;
+                    for (uint32_t i = 0; i < specConstantsCount; i++)
+                        if (specConstants[i].index >= 1300 && specConstants[i].index < 1340)
+                            values[specConstants[i].index] = specConstants[i].value;
+                    compiled = pruneBoundFetch(source, values);
+                    if (compiled.size() != source.size()) {
+                        g_deko3dStats.prunedBytes += source.size() - compiled.size();
+                        g_deko3dStats.prunedShaders++;
+                    }
+                }
+                if (!compile(shader->stage, compiled, dksh, log, fast)) {
                     g_deko3dStats.shaderCompileFailures++;
                     static std::atomic<uint32_t> logged{0};
                     if (logged.fetch_add(1) < 32)

@@ -202,6 +202,10 @@ void Run() {
         while (RunnableLocked() == 0 && !g_stopping) {
           g_work_cv.wait_for(lock, std::chrono::milliseconds(2));
           if (RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - since > kGateWatchdog) {
+            // mk9-nx (2026-10-24): each opening logged (rare: 1-3 a run) to see whether the remaining triangle
+            // flashes follow them: the render thread then records draws whose data the game may still be writing.
+            RGPU_WARN("[mk9] gate watchdog: {} items queued behind the gate, frame {} queued / {} done", g_queue.size(),
+                      g_frames_queued, g_frames_done);
             g_gate = g_items_queued;
             ++g_gate_watchdog_opens;
           }

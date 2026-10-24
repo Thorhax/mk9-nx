@@ -354,3 +354,14 @@ The SDK's FFmpeg had the WMV3 sources but its config.h no longer included config
 never registered; config.h is now tracked with that include (rebuild sdk/out/*/liblibavcodec*.a after a fresh fetch).
 Console: the Story intro (5:42) played in 341.9 s with 10258 frames, in sync (confirmed by the user).
 Cvars: mk9_movie_ffmpeg (default on), mk9_movie_trace (logs the interface).
+
+## Vertex fetch pruning (2026-10-24)
+The first soak froze 3-8 s on first-time shader compiles; the worst were vertex variants of 400-830 KB of GLSL (~2.3 s
+each on the console). Renut's vertex shaders decode each stream with `switch (_N & 63u)` over every vertex format,
+`_N = g_banjoBoundTypeK` (SPIRV_CROSS_CONSTANT_ID_(1300+K)). plume's loadVariant (pruneBoundFetch) now drops the cases
+a variant's constants make unreachable before compiling (all 26544 case blocks of the 1659 switches end in break, so
+nothing falls through). uam on PC: 0.71 -> 0.32 s for an 830 KB shader; for formats other than the first case Mesa did
+not fold the switch at all (25.8 KB of code -> 12 KB), so the GPU runs less code too. Console, empty cache: compiles
+519 -> 275 ms on average. Cache keys stay those of the whole text (old caches stay valid).
+Also: each 500 ms gate watchdog opening is logged ([mk9] gate watchdog), a suspect for the rare triangle flashes the
+user still sees (1-3 openings a run).

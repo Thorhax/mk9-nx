@@ -48,6 +48,8 @@ namespace plume {
         std::atomic<uint64_t> shaderCompiles{0}, shaderCompileNs{0}, shaderCacheHits{0}, shaderCompileFailures{0};
         // mk9-nx (2026-10-24, fastFirstCompile): full compiles done in the background, and how often one gave way.
         std::atomic<uint64_t> backgroundCompiles{0}, backgroundInterrupted{0};
+        // mk9-nx (2026-10-24): vertex variants whose fetch switches were cut before compiling, and the GLSL saved.
+        std::atomic<uint64_t> prunedShaders{0}, prunedBytes{0};
         std::atomic<uint64_t> imageBytes{0}, bufferBytes{0}, codeBytes{0}, commandBytes{0};
         std::atomic<uint64_t> descriptorWrites{0}, pipelineBinds{0}, stateBinds{0}, draws{0};
         std::atomic<uint64_t> windowDraws{0}; // draws whose shaders read fetch data from memory (storage binding 15)

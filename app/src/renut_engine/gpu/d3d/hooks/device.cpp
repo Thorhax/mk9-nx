@@ -680,7 +680,10 @@ u32 IsFencePending_hook(u32 fence) {
     return 0;
   if (fence == *reinterpret_cast<const be_u32 *>(bytes + d3d::kDeviceOffsetFenceTag))
     KickOff_hook(device_va);
-  return FencePending(bytes, fence) ? 1 : 0;
+  const bool pending = FencePending(bytes, fence);
+  if (pending)
+    render_thread::OpenGate();  // mk9-nx (2026-10-24, mk9_record_after_swap): the game polls for that work
+  return pending ? 1 : 0;
 }
 
 // BOOL CBlocker::Check() [0x8264DCD0]: one poll of a D3D wait for the GPU

@@ -24,6 +24,15 @@
 #include <rex/cvar.h>
 
 // sa2-nx (2026-10-20): see g_done_waiters and Run.
+// mk9-nx (2026-10-24): the render thread records a frame's work only once the game has queued the frame's Swap.
+REXCVAR_DEFINE_BOOL(mk9_record_after_swap, true, "MK9/Renderer",
+                    "Renut's renderer: the render thread takes a frame's draws only once the game thread has reached "
+                    "the frame's Swap. MK9 writes its particles' vertices and indices after their draw calls, until "
+                    "the end of the frame (mk9_fetch_late_probe), and the render thread read them as it caught up. A "
+                    "thread waiting for the render thread (a fence, a drain) lets it go on at once, and so does 500 ms "
+                    "with nothing allowed. A frame more of latency")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DEFINE_BOOL(sa2_renut_done_notify_waiters, true, "SA2/Renderer",
                     "Renut's render thread signals its work done (frames, fences, drains) only when a thread waits for "
                     "it: a signal is a kernel call on the Switch even with nobody waiting, and it made one after every "
@@ -108,6 +117,33 @@ bool g_running = false;   // the thread takes work
 bool g_stopping = false;  // Stop: finish what is queued, then end
 uint64_t g_items_queued = 0;
 uint64_t g_items_done = 0;
+// mk9-nx (2026-10-24, mk9_record_after_swap): items taken by the render thread, and how many it may take (all of them
+// with the gate off).
+uint64_t g_items_taken = 0;
+uint64_t g_gate = 0;
+uint64_t g_gate_watchdog_opens = 0, g_gate_wait_opens = 0;
+// Only for a wait nothing opens the gate for (none seen): the console's fights run 55 ms frames, and a 50 ms watchdog
+// opened the gate in the last ms of one frame in three, while the game was writing the particles.
+constexpr std::chrono::milliseconds kGateWatchdog{500};
+// mk9-nx (2026-10-24): the game threads' waits for the render thread (fence waits, the Swap's), for the gate's cost.
+uint64_t g_fence_wait_us = 0, g_fence_waits = 0, g_swap_wait_us = 0;
+bool GateOn() {
+  static const bool on = REXCVAR_GET(mk9_record_after_swap);
+  return on;
+}
+// Requires g_mutex.
+size_t RunnableLocked() {
+  if (!GateOn() || g_stopping)
+    return g_queue.size();
+  return size_t(std::min<uint64_t>(g_queue.size(), g_gate > g_items_taken ? g_gate - g_items_taken : 0));
+}
+// Requires g_mutex: everything queued so far may run (a thread is about to wait for the render thread).
+void OpenGateLocked() {
+  if (GateOn() && g_gate < g_items_queued) {
+    g_gate = g_items_queued;
+    ++g_gate_wait_opens;
+  }
+}
 uint64_t g_frames_queued = 0;
 uint64_t g_frames_done = 0;
 uint64_t g_fences_done = 0;  // fence completions written, plus callbacks reached
@@ -160,7 +196,17 @@ void Run() {
     {
       std::unique_lock lock(g_mutex);
       g_render_waiting = true;
-      if (WakeBatch() > 1) {
+      if (GateOn()) {
+        // mk9-nx (mk9_record_after_swap): work behind the gate waits for the frame's Swap, a waiter, or kGateWatchdog.
+        const Clock::time_point since = Clock::now();
+        while (RunnableLocked() == 0 && !g_stopping) {
+          g_work_cv.wait_for(lock, std::chrono::milliseconds(2));
+          if (RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - since > kGateWatchdog) {
+            g_gate = g_items_queued;
+            ++g_gate_watchdog_opens;
+          }
+        }
+      } else if (WakeBatch() > 1) {
         // sa2-nx (sa2_renut_wake_batch): draws queued without a wake are taken within 2 ms at the latest.
         while (g_queue.empty() && !g_stopping)
           g_work_cv.wait_for(lock, std::chrono::milliseconds(2));
@@ -170,7 +216,14 @@ void Run() {
       g_render_waiting = false;
       if (g_queue.empty())
         break;
-      batch.swap(g_queue);
+      const size_t runnable = RunnableLocked();
+      if (runnable == g_queue.size()) {
+        batch.swap(g_queue);
+      } else {
+        batch.assign(std::make_move_iterator(g_queue.begin()), std::make_move_iterator(g_queue.begin() + runnable));
+        g_queue.erase(g_queue.begin(), g_queue.begin() + runnable);
+      }
+      g_items_taken += batch.size();
     }
     // banjo-nx (2026-10-19, render-thread proposal 19): one clock read per item (the end of one is the start of the
     // next). Its other half, one State().mutex hold across consecutive locked items, hung the emulator run at the
@@ -234,6 +287,7 @@ void Start() {
 // sa2-nx (2026-10-20, sa2_renut_wake_batch): before a thread waits for the render thread, the draws queued without a
 // wake are handed over. Requires g_mutex.
 void WakeForWaitLocked() {
+  OpenGateLocked();  // mk9-nx (mk9_record_after_swap): the waiter needs the work queued so far
   if (g_render_waiting && !g_queue.empty())
     g_work_cv.notify_one();
 }
@@ -337,9 +391,12 @@ bool WaitForFenceProgress(std::chrono::milliseconds timeout) {
   const uint64_t seen = g_fences_done;
   WakeForWaitLocked();  // sa2-nx (sa2_renut_wake_batch)
   ++g_done_waiters;  // sa2-nx (sa2_renut_done_notify_waiters)
+  const Clock::time_point since = Clock::now();
   g_done_cv.wait_for(lock, timeout,
                      [seen] { return g_fences_done != seen || !g_running || g_stopping; });
   --g_done_waiters;
+  g_fence_wait_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - since).count());
+  ++g_fence_waits;
   return g_running && !g_stopping;
 }
 
@@ -435,8 +492,17 @@ uint64_t QueueFrame(std::function<void()> work) {
   });
   --g_done_waiters;
   const uint64_t done = g_frames_done;
-  lock.unlock();
+  const uint64_t watchdog_opens = g_gate_watchdog_opens, wait_opens = g_gate_wait_opens;
   const auto waited = std::chrono::steady_clock::now() - waiting;
+  g_swap_wait_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waited).count());
+  if (done % 600 == 1) {
+    RGPU_INFO("[mk9] mk9_record_after_swap {}: gate opened {} times by a waiter or a Swap, {} by the 500 ms watchdog "
+              "({} frames); game threads waited {:.2f} ms a frame at the Swap, {:.2f} ms in {} fence waits",
+              GateOn(), wait_opens, watchdog_opens, done, double(g_swap_wait_us) / 600000.0,
+              double(g_fence_wait_us) / 600000.0, g_fence_waits);
+    g_swap_wait_us = g_fence_wait_us = g_fence_waits = 0;
+  }
+  lock.unlock();
   frame_stats::OnGameThreadWait(std::chrono::duration<double, std::milli>(waited).count());
   // banjo-nx (2026-10-19, banjo_late_input): this frame's slack (the game thread only: one Swap at a time).
   {
@@ -457,6 +523,19 @@ uint64_t QueueFrame(std::function<void()> work) {
   g_slack_next = (g_slack_next + 1) % kSlackFrames;
   g_slack_count = std::min(g_slack_count + 1, kSlackFrames);
   return done;
+}
+
+void OpenGate() {
+  bool wake;
+  {
+    std::lock_guard lock(g_mutex);
+    if (!GateOn() || g_gate >= g_items_queued)
+      return;
+    OpenGateLocked();
+    wake = g_render_waiting;
+  }
+  if (wake)
+    g_work_cv.notify_one();
 }
 
 uint64_t FramesDone() {

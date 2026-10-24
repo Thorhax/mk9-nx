@@ -237,3 +237,35 @@ Bisection so far (same 260-300 s scripted match, GTX 960M; the ladder's opponent
   it covers are consumed. To check: which of the six draw hooks the particle draws come through, and when the
   renderer writes back the read pointer (`device+11024`) relative to consuming the indirect buffers.
 - The emulated GPU draws the same effects correctly.
+
+## The fights' triangles on the Switch: the render thread read particle data before the game had written it (2026-10-24)
+
+(The diagnostics named here, `mk9_fetch_late_probe` and the other test switches, are not in the tree: they are in
+`out/experiments_2026-10-24.patch`, which applies to commit c0c6f6b.) Found overnight on the console with a fixed scene (rig scripts: Training > Practice, arena The Dead Pool, Scorpion vs
+Sub-Zero, seeded inputs; the ladder's random stages had made every earlier A/B meaningless).
+
+- The worst shader on that stage, `63A3070E606FB209`, draws instanced mesh particles: `c18.x` is the mesh's vertex
+  count (772, 276, 249), fetch 95 the mesh, fetch 92 80 bytes per instance, and the instance is
+  `floor((vertex id + 0.5) / c18.x)`. Every captured bad vertex had a vertex id (an index value) whose instance lay
+  beyond the instances in fetch 92's copy, so it read whatever followed it in the upload ring.
+- The particle vertex and index buffers are the game's own dynamic memory (physical 0x0D03xxxx, 0x1FBxxxxx-0x1FCxxxxx),
+  not Direct3D's inline-data ring (`[mk9] inline-data ring` diagnostics: 2 quarter moves a run, never waits).
+- `mk9_fetch_late_probe` (diagnostic): of 253,000 window-shader buffers hashed at their draw and at every later
+  KickOff and Swap, 46 % changed after the draw call, all of them by the frame's Swap, none afterwards, and no later
+  draw reused the same bytes. MK9 fills a frame's particle buffers after issuing the draws, until the frame ends; the
+  Xbox 360's GPU, a frame behind, reads them complete.
+- Renut's render thread records draws as soon as it catches up with the game thread: it read the indices (and vertex
+  copies) of some draws before the game had written them, so stale indices from an earlier, larger batch of particles.
+- Not the cause: the frames the game may run ahead (`mk9_max_frames_ahead = 0`), copying the fetch data at the Swap only
+  (`mk9_fetch_copy_at_frame_end`: indices are read at record time anyway; worse), the index buffer header moving after
+  the draw (`mk9_index_address_at_draw`: 8 of 196,738 draws).
+- Fix: `mk9_record_after_swap` (backend/render_thread.cpp): the render thread takes a frame's work only once the game
+  has queued its Swap. A thread that waits for the render thread (fence waits, drains, IsFencePending polls) opens the
+  gate at once; a 500 ms watchdog opens it otherwise (50 ms at first, which fired in one fight frame in three: they run 55 ms). On by default. The Dead Pool: 0 bad vertices in 153,469 window-shader draws
+  (3,000-5,000 per 1,000 without), every screenshot clean, fire and sparks drawn.
+
+- Console, after the fix (2026-10-24 morning, user's clocks one step lower; fps from the game's 5 s log lines, 90 s fights):
+  The Dead Pool practice 18.3 avg (fix on, 500 ms watchdog) vs 18.2-18.4 off; Courtyard (Night) practice 10.9 on, 10.9
+  off, 11.1 with 0.1.5 (game-thread bound: GPU 13 ms, render thread 6 ms, ~90 ms frames); an Arcade Ladder fight
+  (Cage vs Jax) ~35. The game threads never wait for the render thread in a fight (0 fence waits, 0 ms at the
+  Swap), gate on or off. Practice's red limbs are Practice Options > Collision Region (on by default), not a bug.

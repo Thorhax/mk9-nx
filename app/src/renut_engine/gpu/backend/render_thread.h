@@ -67,6 +67,9 @@ uint64_t QueueFrame(std::function<void()> work);
 void InstallLateInput();
 std::string LateInputReport();
 uint64_t FramesDone();
+// mk9-nx (2026-10-24, mk9_record_after_swap): the render thread may take everything queued so far (a game thread
+// polls for its progress).
+void OpenGate();
 
 // Waits until everything queued so far has run.
 void Drain();

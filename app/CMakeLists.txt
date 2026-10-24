@@ -43,6 +43,7 @@ set(MK9_SOURCES
     src/mk9_script_input.cpp
     # Presented frames per second in the log (hook on the game's Direct3D swap, sub_82BF6D58).
     src/mk9_frame_counter.cpp
+    src/mk9_movie.cpp
     # Switch: every thread's stack in logs/rex/rex_crash.log when no frame is presented for a while (mk9_hang_dump_s).
     src/mk9_hang_watch.cpp
     # Recordings of the game image for frame-by-frame comparisons (sa2-nx's recorder: sa2_video_s, lockstep).
@@ -105,6 +106,9 @@ set_source_files_properties(src/cpu/sa2_enhancements.cpp PROPERTIES
 
 # Link the SDK. Stage 3 draws with ReXGlue's Xenos GPU emulation; the native renderer replaces it in stage 4.
 rexglue_setup_target(mk9 GPU_PLUGINS xenos)
+
+# mk9-nx (2026-10-24): the SDK's FFmpeg (its WMV3 decoder) for the cutscenes: src/mk9_movie.cpp.
+target_link_libraries(mk9 PRIVATE libavcodec)
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].
 if(REXGLUE_PLATFORM_SWITCH AND TARGET rexcore)

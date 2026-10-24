@@ -340,3 +340,17 @@ Profiled an Arcade fight (rig/ladder.sh ... KP). Steady fight frames are at the 
   cached as it is; GPU time in a fight 10.00 vs 10.05 ms a frame (arena 20, A/B). Mode 2 adds the full compile in
   the background for the cache (it interrupts itself between passes when a compile waits, and starts after 1.5 s
   without one), but running it during the fight cost 46 fps for 5 s. 0 = the old behaviour.
+
+## Cutscenes decoded by FFmpeg (2026-10-24)
+Story cutscenes (Movies\*.wmv, WMV3 Main 1280x720 30 fps with B frames + WMA2) drifted: the XDK's WMV9 decoder,
+recompiled, ran 23-35 fps on a whole core of the V1 and the picture fell ~4 s behind the sound. The Switch's FFmpeg
+decodes the same file at 124 fps on one core (devkitPro's 7.1; the SDK's 4.4 lacks the VC-1 NEON transforms but keeps
+up easily). src/mk9_movie.cpp replaces only XMV's codec plug-in (Init/Close/Decode/GetOutput/Reset at
+0x82D255C0/80/330/390/228): XMV keeps demuxing, audio and timing. Init keeps the original's guest state block and
+registers the original message handler (0x82D25580: the output-format handshake), so only the frame decoding
+changed. Frames come from XMV's data callback in pieces; the first carries the time and the frame's whole size (the
+0x00500001 result ends an ASF payload, not a frame). Output: I420 (Y, U, V) into XMV's buffer, time in ms.
+The SDK's FFmpeg had the WMV3 sources but its config.h no longer included config_masseffect_wmv3.h, so the decoder was
+never registered; config.h is now tracked with that include (rebuild sdk/out/*/liblibavcodec*.a after a fresh fetch).
+Console: the Story intro (5:42) played in 341.9 s with 10258 frames, in sync (confirmed by the user).
+Cvars: mk9_movie_ffmpeg (default on), mk9_movie_trace (logs the interface).

@@ -55,6 +55,10 @@ public:
 	// in steps of 8 (the per-thread allocation unit, which sets how many warps an SM holds), then less code. nullptr
 	// when it does not compile.
 	static std::unique_ptr<DekoCompiler> CompileBest(pipeline_stage stage, const char* glsl, int optLevel = 3);
+	// mk9-nx (2026-10-24): asked before each of CompileBest's alternatives; true ends CompileBest with nullptr and
+	// s_bestInterrupted set (uam::compileInterruptible).
+	static bool (*s_bestStop)();
+	static bool s_bestInterrupted;
 
 	// banjo-nx (2026-10-18): the codegen of another compiler's TGSI (its GLSL program must outlive this one, or be
 	// handed over: TakeGlslProgram).

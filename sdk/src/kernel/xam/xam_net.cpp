@@ -12,6 +12,9 @@
 // Disable warnings about unused parameters for kernel functions
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+#include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <cstring>
 
 #if REX_PLATFORM_MAC
@@ -19,6 +22,7 @@
 #endif
 
 #include <rex/chrono/clock.h>
+#include <rex/cvar.h>
 #include <rex/kernel/xam/module.h>
 #include <rex/kernel/xam/private.h>
 #include <rex/kernel/xboxkrnl/error.h>
@@ -578,7 +582,27 @@ u32 NetDll_inet_addr_entry(mapped_string addr_ptr) {
   return rex::byte_swap(addr);
 }
 
+// mk9-nx (2026-10-24, diagnostics): the game's socket set-up and slow receives, to find why recvfrom blocked MK9's main
+// thread for hundreds of ms in fights (the profile's hitches). The first calls of each kind only.
+static std::atomic<int> g_mk9_net_logs{0};
+#define MK9_NET_LOG(...)                                         \
+  do {                                                           \
+    if (g_mk9_net_logs.fetch_add(1, std::memory_order_relaxed) < 200) \
+      REXLOG_INFO(__VA_ARGS__);                                  \
+  } while (0)
+
+// mk9-nx (2026-10-24): with the host's sockets up (log_network starts them on the Switch), MK9 found a network and polled
+// a non-blocking UDP socket from its main thread every frame; each recvfrom took ~210 ms to say EAGAIN on Horizon, so
+// fights stuttered (55-58 fps, against a flat 60 without log_network). The game has nothing to talk to on the Switch.
+REXCVAR_DEFINE_BOOL(mk9_guest_sockets, false, "MK9",
+                    "The game's own sockets work (off: socket() fails with WSAENETDOWN, as with no network)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 u32 NetDll_socket_entry(u32 caller, u32 af, u32 type, u32 protocol) {
+  if (!REXCVAR_GET(mk9_guest_sockets)) {
+    XThread::SetLastError(0x2742);  // WSAENETDOWN
+    return -1;
+  }
   XSocket* socket = new XSocket(REX_KERNEL_STATE());
   X_STATUS result =
       socket->Initialize(XSocket::AddressFamily((uint32_t)af), XSocket::Type((uint32_t)type),
@@ -592,6 +616,8 @@ u32 NetDll_socket_entry(u32 caller, u32 af, u32 type, u32 protocol) {
     return -1;
   }
 
+  MK9_NET_LOG("[net] socket(af {}, type {}, proto {}) = {:08X} (caller {:08X})", af, type, protocol, socket->handle(),
+              caller);
   return socket->handle();
 }
 
@@ -640,6 +666,12 @@ u32 NetDll_setsockopt_entry(u32 caller, u32 socket_handle, u32 level, u32 optnam
   }
 
   X_STATUS status = socket->SetOption(level, optname, optval_ptr, optlen);
+  {
+    uint32_t raw = 0;
+    if (optval_ptr && optlen >= 4) std::memcpy(&raw, static_cast<void*>(optval_ptr), 4);
+    MK9_NET_LOG("[net] setsockopt({:08X}, level {:X}, opt {:X}, value bytes {:08X}, len {}) -> {}", socket_handle, level,
+                optname, raw, optlen, XSUCCEEDED(status) ? "ok" : "FAILED");
+  }
   return XSUCCEEDED(status) ? 0 : -1;
 }
 
@@ -652,6 +684,12 @@ u32 NetDll_ioctlsocket_entry(u32 caller, u32 socket_handle, u32 cmd, mapped_void
   }
 
   X_STATUS status = socket->IOControl(cmd, arg_ptr);
+  {
+    uint32_t raw = 0;
+    if (arg_ptr) std::memcpy(&raw, static_cast<void*>(arg_ptr), 4);
+    MK9_NET_LOG("[net] ioctlsocket({:08X}, cmd {:08X}, arg bytes {:08X}) -> {} (errno {})", socket_handle, cmd, raw,
+                XSUCCEEDED(status) ? "ok" : "FAILED", errno);
+  }
   if (XFAILED(status)) {
     XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
     return -1;
@@ -869,8 +907,17 @@ u32 NetDll_recvfrom_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u3
     native_from = *from_ptr;
   }
   uint32_t native_fromlen = fromlen_ptr ? fromlen_ptr.value() : 0;
+  const auto t0 = std::chrono::steady_clock::now();
   int ret =
       socket->RecvFrom(buf_ptr, buf_len, flags, &native_from, fromlen_ptr ? &native_fromlen : 0);
+  {
+    const int err = errno;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (ms >= 5)
+      MK9_NET_LOG("[net] recvfrom({:08X}, len {}, flags {:X}) = {} after {} ms (errno {}, caller {:08X})", socket_handle,
+                  buf_len, flags, ret, ms, err, caller);
+    errno = err;
+  }
 
   if (from_ptr) {
     from_ptr->sin_family = native_from.sin_family;

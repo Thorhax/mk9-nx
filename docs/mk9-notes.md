@@ -326,3 +326,17 @@ age): a still count = stuck in the kernel, a climbing one = a failing map retrie
 The user compared with Xbox 360 gameplay: the Desert's thick sandstorm and Courtyard (Night)'s brighter look, as Renut
 draws them, are correct. The emulated renderer (sa2_renderer=xenos) is wrong on both (it lightens the Desert's haze
 and darkens the Courtyard), so it is not a reference for these stages.
+
+## Fight hitches (2026-10-24)
+Profiled an Arcade fight (rig/ladder.sh ... KP). Steady fight frames are at the 60 cap on the V1 (render thread
+~5.5 ms, GPU ~9-10 ms a frame at 768 MHz). The hitches were:
+- **Guest sockets.** log_network initialises the Switch's sockets; MK9 then found a network and polled a
+  non-blocking UDP socket from the main thread every frame, and each recvfrom took ~210 ms on Horizon to return
+  EAGAIN (60-85% of the main thread's hitch time). Players without log_network never had it, but every rig
+  measurement with K0/KP did (fights read 55-58 fps instead of 60). `mk9_guest_sockets` (default off) makes the
+  game's socket() fail with WSAENETDOWN. xam_net.cpp logs the first socket calls and recvfroms over 5 ms ([net]).
+- **First-encounter shader compiles.** A pixel shader's CompileBest is up to four back-end passes (266 ms average in
+  the fight intro, the render thread waiting). `mk9_deko3d_first_compile` = 1 (default): one pass (~2.5x faster),
+  cached as it is; GPU time in a fight 10.00 vs 10.05 ms a frame (arena 20, A/B). Mode 2 adds the full compile in
+  the background for the cache (it interrupts itself between passes when a compile waits, and starts after 1.5 s
+  without one), but running it during the fight cost 46 fps for 5 s. 0 = the old behaviour.

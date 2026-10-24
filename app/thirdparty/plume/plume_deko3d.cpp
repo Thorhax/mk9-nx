@@ -9,6 +9,7 @@
 #include <pthread.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cassert>
 #include <cinttypes>
 #include <cstdarg>
@@ -91,6 +92,9 @@ namespace plume {
 
     static Deko3DShaderCacheLookup g_cacheLookup;
     static Deko3DShaderCacheStore g_cacheStore;
+    // mk9-nx (2026-10-24, fastFirstCompile): compiles something waits for, queued and not yet started (a background
+    // compile stops between passes while there is one).
+    static std::atomic<int> g_foregroundQueued{0};
     void SetDeko3DShaderCache(Deko3DShaderCacheLookup lookup, Deko3DShaderCacheStore store) {
         g_cacheLookup = std::move(lookup);
         g_cacheStore = std::move(store);
@@ -1284,11 +1288,29 @@ namespace plume {
             CompileJob *job = nullptr;
             {
                 std::unique_lock<std::mutex> lock(compileMutex);
-                compileWake.wait(lock, [this] { return compileStop || !compileQueue.empty(); });
+                // mk9-nx (2026-10-24): a compile something waits for first; the background ones (fastFirstCompile)
+                // only once none has come for kBackgroundQuietNs (variants come in bursts: a new stage or fighter).
+                auto foreground = [this] {
+                    return std::find_if(compileQueue.begin(), compileQueue.end(), [](CompileJob *j) { return !j->background; });
+                };
+                for (;;) {
+                    compileWake.wait(lock, [this] { return compileStop || !compileQueue.empty(); });
+                    if (compileStop || foreground() != compileQueue.end())
+                        break;
+                    const uint64_t now = armTicksToNs(armGetSystemTick());
+                    if (now >= lastForegroundNs + kBackgroundQuietNs)
+                        break;
+                    compileWake.wait_for(lock, std::chrono::nanoseconds(lastForegroundNs + kBackgroundQuietNs - now));
+                }
                 if (compileStop)
                     break;
-                job = compileQueue.front();
-                compileQueue.erase(compileQueue.begin());
+                auto pick = foreground();
+                if (pick == compileQueue.end())
+                    pick = compileQueue.begin();
+                job = *pick;
+                compileQueue.erase(pick);
+                if (!job->background)
+                    g_foregroundQueued.fetch_sub(1, std::memory_order_relaxed);
             }
             static const uam::Stage stages[] = {uam::Stage::Vertex, uam::Stage::TessCtrl, uam::Stage::TessEval,
                                                 uam::Stage::Geometry, uam::Stage::Fragment, uam::Stage::Compute};
@@ -1321,9 +1343,34 @@ namespace plume {
                          defines.c_str());
                 }
             }
-            uam::Result r = uam::compile(stages[std::min<uint32_t>(job->stage, 5)], job->source->c_str());
+            const uam::Stage ustage = stages[std::min<uint32_t>(job->stage, 5)];
+            uam::Result r = job->fast         ? uam::compileFast(ustage, job->source->c_str())
+                            : job->background ? uam::compileInterruptible(ustage, job->source->c_str(),
+                                                                          [] { return g_foregroundQueued.load(std::memory_order_relaxed) > 0; })
+                                              : uam::compile(ustage, job->source->c_str());
+            if (job->background && r.interrupted) {
+                // A compile something waits for came in between two passes: this one goes back in the queue.
+                g_deko3dStats.backgroundInterrupted++;
+                std::lock_guard<std::mutex> lock(compileMutex);
+                compileQueue.push_back(job);
+                continue;
+            }
+            if (job->background) {
+                // mk9-nx (2026-10-24): the full compile of a variant in use; for the next start. Not counted as a
+                // run-time compile (nothing waited for it).
+                g_deko3dStats.backgroundCompiles++;
+                if (r.ok && g_cacheStore)
+                    g_cacheStore(job->key, r.dksh);
+                delete job->source;
+                delete job;
+                continue;
+            }
             g_deko3dStats.shaderCompileNs += armTicksToNs(armGetSystemTick()) - t0;
             g_deko3dStats.shaderCompiles++;
+            {
+                std::lock_guard<std::mutex> lock(compileMutex);
+                lastForegroundNs = armTicksToNs(armGetSystemTick());
+            }
             {
                 std::lock_guard<std::mutex> lock(compileMutex);
                 job->ok = r.ok;
@@ -1339,8 +1386,23 @@ namespace plume {
         compileDone.notify_all();
     }
 
-    bool Deko3DDevice::compile(DkStage stage, const std::string &source, std::vector<uint8_t> &dksh, std::string &log) {
+    // mk9-nx (2026-10-24, fastFirstCompile): the full compile of a variant compiled fast, for the cache.
+    void Deko3DDevice::queueBackgroundCompile(DkStage stage, const std::string &source, uint64_t key) {
+        CompileJob *job = new CompileJob;
+        job->stage = stage;
+        job->source = new std::string(source);
+        job->background = true;
+        job->key = key;
+        {
+            std::lock_guard<std::mutex> lock(compileMutex);
+            compileQueue.push_back(job);
+        }
+        compileWake.notify_one();
+    }
+
+    bool Deko3DDevice::compile(DkStage stage, const std::string &source, std::vector<uint8_t> &dksh, std::string &log, bool fast) {
         CompileJob job;
+        job.fast = fast;
         job.stage = stage;
         job.source = &source;
         job.dksh = &dksh;
@@ -1353,6 +1415,7 @@ namespace plume {
         {
             std::lock_guard<std::mutex> lock(compileMutex);
             compileQueue.push_back(&job);
+            g_foregroundQueued.fetch_add(1, std::memory_order_relaxed);
             lend = lend && compileThreadHandle != 0;
             if (lend) {
                 compileWaiters.push_back(waiterPriority);
@@ -1483,7 +1546,9 @@ namespace plume {
             }
             if (!have) {
                 std::string log;
-                if (!compile(shader->stage, source, dksh, log)) {
+                // mk9-nx (2026-10-24, fastFirstCompile): only a pixel shader's compile has alternatives to skip.
+                const bool fast = g_deko3dOptions.fastFirstCompile && shader->stage == DkStage_Fragment;
+                if (!compile(shader->stage, source, dksh, log, fast)) {
                     g_deko3dStats.shaderCompileFailures++;
                     static std::atomic<uint32_t> logged{0};
                     if (logged.fetch_add(1) < 32)
@@ -1491,7 +1556,9 @@ namespace plume {
                 }
                 else {
                     have = true;
-                    if (g_cacheStore)
+                    if (fast && g_deko3dOptions.backgroundFullCompile)
+                        queueBackgroundCompile(shader->stage, source, key);
+                    else if (g_cacheStore)
                         g_cacheStore(key, dksh);
                 }
             }

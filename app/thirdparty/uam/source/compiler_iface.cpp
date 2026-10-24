@@ -674,6 +674,9 @@ extern "C" void nv50_ir_set_banjo_flags(unsigned flags);
 
 extern "C" void nv50_ir_set_banjo_gpr_cap(int cap);
 
+bool (*DekoCompiler::s_bestStop)() = nullptr;
+bool DekoCompiler::s_bestInterrupted = false;
+
 std::unique_ptr<DekoCompiler> DekoCompiler::CompileBest(pipeline_stage stage, const char* glsl, int optLevel)
 {
 	// banjo-nx (2026-10-19, banjo_deko3d_gpr32): a variant with constant 910 = 1 (plume writes its define ahead of the
@@ -693,6 +696,11 @@ std::unique_ptr<DekoCompiler> DekoCompiler::CompileBest(pipeline_stage stage, co
 	{
 		if ((flags & drop) != drop)
 			continue;
+		if (s_bestStop && s_bestStop())
+		{
+			s_bestInterrupted = true;
+			return nullptr;
+		}
 		nv50_ir_set_banjo_flags(flags & ~drop);
 		std::unique_ptr<DekoCompiler> alt(new DekoCompiler(stage, optLevel));
 		const bool ok = alt->CompileTgsiOf(*best);

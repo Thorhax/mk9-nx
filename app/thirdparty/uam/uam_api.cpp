@@ -40,6 +40,7 @@ void shutdown() {
 }
 
 extern "C" void nv50_ir_set_banjo_flags(unsigned flags);
+extern "C" unsigned nv50_ir_get_banjo_flags();
 
 void setBanjoFlags(unsigned flags) {
     nv50_ir_set_banjo_flags(flags);
@@ -55,6 +56,24 @@ Result compile(Stage stage, const char* glsl) {
         if (r.ok) c->WriteDksh(r.dksh);
     }
     uam_set_log_callback(nullptr, nullptr);
+    return r;
+}
+
+Result compileInterruptible(Stage stage, const char* glsl, bool (*stop)()) {
+    DekoCompiler::s_bestStop = stop;
+    DekoCompiler::s_bestInterrupted = false;
+    Result r = compile(stage, glsl);
+    r.interrupted = DekoCompiler::s_bestInterrupted;
+    DekoCompiler::s_bestStop = nullptr;
+    DekoCompiler::s_bestInterrupted = false;
+    return r;
+}
+
+Result compileFast(Stage stage, const char* glsl) {
+    const unsigned flags = nv50_ir_get_banjo_flags();
+    nv50_ir_set_banjo_flags(flags & ~16u);
+    Result r = compile(stage, glsl);
+    nv50_ir_set_banjo_flags(flags);
     return r;
 }
 

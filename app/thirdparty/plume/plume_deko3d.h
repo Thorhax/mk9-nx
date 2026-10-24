@@ -46,6 +46,8 @@ namespace plume {
     // Counters for the renderer's reports.
     struct Deko3DStats {
         std::atomic<uint64_t> shaderCompiles{0}, shaderCompileNs{0}, shaderCacheHits{0}, shaderCompileFailures{0};
+        // mk9-nx (2026-10-24, fastFirstCompile): full compiles done in the background, and how often one gave way.
+        std::atomic<uint64_t> backgroundCompiles{0}, backgroundInterrupted{0};
         std::atomic<uint64_t> imageBytes{0}, bufferBytes{0}, codeBytes{0}, commandBytes{0};
         std::atomic<uint64_t> descriptorWrites{0}, pipelineBinds{0}, stateBinds{0}, draws{0};
         std::atomic<uint64_t> windowDraws{0}; // draws whose shaders read fetch data from memory (storage binding 15)
@@ -512,7 +514,16 @@ namespace plume {
             std::string *log;
             bool done = false;
             bool ok = false;
+            // mk9-nx (2026-10-24, fastFirstCompile): fast = a single pass; background = owned by the queue (the
+            // full compile of a variant already in use: stored in the cache, then deleted), key = its cache key.
+            bool fast = false;
+            bool background = false;
+            uint64_t key = 0;
         };
+        // mk9-nx (2026-10-24, fastFirstCompile): when the last compile something waited for ended (compileMutex).
+        static constexpr uint64_t kBackgroundQuietNs = 1500000000ull;
+        uint64_t lastForegroundNs = 0;
+        void queueBackgroundCompile(DkStage stage, const std::string &source, uint64_t key);
         std::vector<CompileJob *> compileQueue;
         // banjo-nx (2026-10-18): the uam thread's handle, the priorities of the threads waiting for a compile, and the
         // priority last set (applyCompilePriority).
@@ -612,7 +623,7 @@ namespace plume {
         void collectRetired();
         void noteSubmission(); // after a submission: a fence for its serial
         const DkShader *loadVariant(const Deko3DShader *shader, const RenderSpecConstant *specConstants, uint32_t specConstantsCount);
-        bool compile(DkStage stage, const std::string &source, std::vector<uint8_t> &dksh, std::string &log);
+        bool compile(DkStage stage, const std::string &source, std::vector<uint8_t> &dksh, std::string &log, bool fast = false);
         bool loadCode(const std::vector<uint8_t> &dksh, DkShader &shader, const char *what);
         void compileWorker();
         void applyCompilePriority();
@@ -695,6 +706,11 @@ namespace plume {
         // rebindWindow: the address window bound again for every such draw.
         int l2Invalidate = 0;
         bool rebindWindow = false;
+        // mk9-nx (2026-10-24): a pixel shader compile something waits for is a single back-end pass
+        // (uam::compileFast), stored in the DKSH cache as it is; with backgroundFullCompile it is not stored, and its
+        // full compile (CompileBest's alternatives) runs in the background, when no compile waits, for the cache.
+        bool fastFirstCompile = false;
+        bool backgroundFullCompile = false;
     };
     void Deko3DSetOptions(const Deko3DOptions &options);
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (barriers() reads it per call).

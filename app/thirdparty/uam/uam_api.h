@@ -17,6 +17,7 @@ struct Result {
     bool ok = false;
     std::vector<uint8_t> dksh;  // a whole .dksh file (header, program header, code, constants); empty on failure
     std::string log;            // everything uam reported for this shader (errors, warnings); may be set when ok
+    bool interrupted = false;   // mk9-nx (2026-10-24): compileInterruptible stopped between passes (ok = false)
 };
 
 // once, before the first compile(). resident_frontend keeps Mesa's built-in GLSL function library and
@@ -30,6 +31,12 @@ void shutdown();
 // A compile error, and any fatal error inside Mesa or nv50_ir, returns ok = false with the reason in
 // log; it never exits the process.
 Result compile(Stage stage, const char* glsl);
+// mk9-nx (2026-10-24): one back-end pass only (pass 16 off for this compile: no CompileBest alternatives), for a
+// compile something waits on; about a quarter of a pixel shader's full compile time.
+Result compileFast(Stage stage, const char* glsl);
+// mk9-nx (2026-10-24): compile(), but `stop` is asked between CompileBest's passes; when it says yes the compile ends
+// there with ok = false and interrupted = true (a background compile giving way to one something waits for).
+Result compileInterruptible(Stage stage, const char* glsl, bool (*stop)());
 
 // banjo-nx (2026-10-18): banjo-nx's codegen passes (nv50_ir_peephole.cpp): 1 PRMT byte moves, 2 the storage buffer
 // offset fold, 4 the shift distribution, 8 the fragment input interpolation cache, 16 choose per fragment shader

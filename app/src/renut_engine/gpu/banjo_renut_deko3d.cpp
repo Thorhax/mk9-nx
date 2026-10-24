@@ -37,6 +37,15 @@ REXCVAR_DEFINE_INT32(mk9_deko3d_l2_invalidate, 0, "MK9/Renderer",
 REXCVAR_DEFINE_BOOL(mk9_deko3d_rebind_window, false, "MK9/Renderer",
                     "deko3d: the address window (storage binding 15) bound again for every draw that reads it (a test)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// mk9-nx (2026-10-24): the first-encounter shader hitches (a pixel shader's full compile is ~4 back-end passes, 266 ms
+// on average in an Arcade fight, the render thread waiting; one pass ~100 ms). The background full compiles (2) cost
+// the fight they ran in 46 fps for 5 s (render thread 5.5 -> 10.5 ms a frame) for fewer registers the GPU does not
+// need there (9 ms a frame of 16.7), so 1 is the default.
+REXCVAR_DEFINE_INT32(mk9_deko3d_first_compile, 1, "MK9/Renderer",
+                     "deko3d: a pixel shader the renderer waits for: 0 its full compile (about 4 passes), 1 one pass, "
+                     "cached as it is (default), 2 one pass, then the full compile in the background for the cache")
+    .range(0, 2)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace banjo::renut_gpu::deko3d {
 
@@ -306,6 +315,8 @@ void InstallShaderCache() {
   options.leanBarriers = Deko3DBarrierLeanOn();
   options.l2Invalidate = REXCVAR_GET(mk9_deko3d_l2_invalidate);  // mk9-nx (2026-10-22)
   options.rebindWindow = REXCVAR_GET(mk9_deko3d_rebind_window);
+  options.fastFirstCompile = REXCVAR_GET(mk9_deko3d_first_compile) >= 1;
+  options.backgroundFullCompile = REXCVAR_GET(mk9_deko3d_first_compile) == 2;
   // The uam thread on the background compile core, below the game's threads (2026-10-18).
   options.compileCore = Deko3DCompileCore();
   options.compilePriority = Deko3DCompilePriority();
@@ -367,12 +378,13 @@ std::string Report() {
   const plume::Deko3DStats &st = plume::GetDeko3DStats();
   const uint64_t compiles = st.shaderCompiles;
   return fmt::format("deko3d: {} draws ({} through the address window), {} pipeline binds ({} state binds); uam {} compiles (avg {:.0f} ms, {} failed), "
-                     "DKSH cache {} hits, {} added; memory: images {} MB, buffers {} MB, code {} KB, commands {} KB; "
+                     "DKSH cache {} hits, {} added; background compiles {} ({} gave way); memory: images {} MB, buffers {} MB, code {} KB, commands {} KB; "
                      "barriers: {} primitives, {} fragments, {} full ({} invalidating textures); copy and 2D engines: {} "
                      "buffer copies, {} texture uploads, {} readbacks, {} image copies, {} resolves, {} blits",
                      st.draws.load(), st.windowDraws.load(), st.pipelineBinds.load(), st.stateBinds.load(), compiles,
                      compiles ? double(st.shaderCompileNs.load()) / 1e6 / double(compiles) : 0.0,
-                     st.shaderCompileFailures.load(), g_cache.hits, g_cache.added, st.imageBytes.load() >> 20,
+                     st.shaderCompileFailures.load(), g_cache.hits, g_cache.added, st.backgroundCompiles.load(),
+                     st.backgroundInterrupted.load(), st.imageBytes.load() >> 20,
                      st.bufferBytes.load() >> 20, st.codeBytes.load() >> 10, st.commandBytes.load() >> 10,
                      st.barriersPrimitives.load(), st.barriersFragments.load(), st.barriersFull.load(),
                      st.barriersImageInvalidate.load(), st.copyBuffer.load(), st.copyUpload.load(), st.copyReadback.load(),

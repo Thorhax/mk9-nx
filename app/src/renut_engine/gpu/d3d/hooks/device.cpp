@@ -919,7 +919,10 @@ void D3DDevice_RunCommandBuffer_hook(u32 device_va, u32 command_buffer,
 constexpr u32 kSa2DeviceOffsetGammaRamp = 15280;  // mk9-nx: SetGammaRamp sub_82BF48B8 [SA2 15408]  // sa2-nx: SA2's +0x3A9C (the +404 block)
 
 // sa2-nx (2026-10-20): the SDK's core layout (system/xthread.cpp).
-REXCVAR_DEFINE_BOOL(sa2_renut_core_layout, true, "SA2/Renderer",
+// mk9-nx (2026-10-25): off by default. MK9's main thread uses ~56% of a core, and the other guest threads crowded
+// cores 1-2 with the render thread (CPU 287% of 300% on Living Forest, core 0 idle 44%); with every guest thread on
+// any core, Living Forest ran 58.5-59.1 fps against 57.5 (two runs each, minimum 55.8-56.8 against 53.6-54.4).
+REXCVAR_DEFINE_BOOL(sa2_renut_core_layout, false, "SA2/Renderer",
                     "Renut's renderer on the Switch: at the first Swap the guest main thread (SA2's game and drawing "
                     "thread) is pinned to core 0 and every other guest thread gets cores 1-2 (the render thread is on "
                     "core 1), so no game thread time-slices with it. Off: every guest thread on any core, as before")

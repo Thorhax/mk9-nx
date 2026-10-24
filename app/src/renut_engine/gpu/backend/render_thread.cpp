@@ -126,7 +126,9 @@ uint64_t g_gate_watchdog_opens = 0, g_gate_wait_opens = 0;
 // opened the gate in the last ms of one frame in three, while the game was writing the particles.
 // mk9-nx (2026-10-25): mk9_gate_watchdog_ms (the user still sees rare triangle flashes; the openings come at screen
 // changes, 500-600 ms frames, when the render thread then records draws the game may still be writing).
-REXCVAR_DEFINE_INT32(mk9_gate_watchdog_ms, 500, "MK9/Renderer",
+// 3000 since 2026-10-25: at 500 it opened at boot and at screen changes (500-600 ms frames) with nothing waiting;
+// at 3000 a 41-minute soak had no opening and no frame of 3 s, and boot to the first fight took as long.
+REXCVAR_DEFINE_INT32(mk9_gate_watchdog_ms, 3000, "MK9/Renderer",
                      "mk9_record_after_swap: work behind the gate runs anyway after this many ms without a Swap or a "
                      "waiter (a safety valve)")
     .range(50, 60000)

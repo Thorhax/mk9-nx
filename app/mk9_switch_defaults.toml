@@ -39,3 +39,8 @@ switch_profile_stacks = false
 usf4_deferred_async_submit = true
 usf4_deferred_slots_log2 = 12
 sa2_native_deferred_recording_naps = 0
+
+# mk9-nx 2026-10-25: contended critical sections spin briefly before the host waiter. On Hell (the heaviest stage, with
+# the particle workers fighting the game thread for one lock ~2,500 times a second) 1024 tries gave 56.5 fps against
+# 55.8 with no spin over three alternating runs each, and about 10 % fewer late frames; 256 and 4096 were no better.
+kernel_critsec_spin = 1024

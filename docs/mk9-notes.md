@@ -496,3 +496,8 @@ out of line and cold). Check of the folding on the console: rig/rdcheck.py read 
 through sys-botbase mid-fight (2,764 KB) and compared it with the image dump: 0 words differ. Checks: the same
 branch-to-self loops, no vector fmla/fmls, a ladder soak clean. Hell (v14 -> v15, two alternating runs each): 58.8 ->
 59.2 fps, late frames 776 -> 677, the game thread 13.9 -> 13.6 ms.
+Tried and not kept (v16): sa2-nx's NEON forms of the small VMX helpers (rex/ppc/intrinsics.h: vperm as TBL2 and
+others; 1,262 vperm sites) together with tools/leaf_locals.py (1,982 leaf functions with loops, 22,256 registers as
+locals). Hell, two alternating runs each against v15: 59.2 -> 59.0 fps, late frames 696 -> 752, game thread 13.6 ->
+13.8 ms: no gain in the noise, so both are left out. (Order matters for tools/float_loads.py: it must run before the
+store cards, whose _C store forms it does not see as stores of a float.)

@@ -411,3 +411,22 @@ the first intro of a stage. Full cache (SOAK16W, 20 minutes): no draw left out, 
 compile freezes mid-fight).
 Seen in the soaks, not from this: the left half of the rooftop arena's floor (by the portal) is pale pinkish-white
 (SOAK8 on v4 shows it too); not yet checked against real footage.
+
+## CPU on the heavy stages; the sound engine's mixer native (2026-10-25)
+Warm-cache fights hold 60 fps on most stages, but a 10-minute profiled soak (SOAK19P) ran Scorpion's Lair (Practice
+arena 8, the lava stage) at ~51 fps: GPU 11.5 ms and the render thread 6.5 ms a frame, but the three cores at 310 %.
+The game's rendering thread (the one calling Swap) took 17-18.5 ms from Swap to Swap there (8.4 ms on lighter
+stages), preempted and waiting on a critical section the particle workers hold (sub_82779818). The long frames in
+play are the pacing holding a late frame (sa2::renut::PaceSwap), not a sleep overshoot: the game thread's waits
+(sub_82360480, sub_82741630) poll appSleep(0) (the constant at 0x820009DC is 0.0) at ~9,000 a second.
+Profiler: switch_perf.cpp now also samples the two busiest other threads every tick (their samples in long frames).
+The guest sound thread used 31-40 % of a core, 31 % of it in sub_82E1E148: the mix matrix with float16 gain ramps,
+each element through the recompiler's vupkd3d128/vpkd3d128 emulation and the stack. src/mk9_native_mix.cpp replaces it
+(mk9_cpu_native_mix, on; code hash checked): same arithmetic as the recompiled code, the recompiler's float16 rules,
+and its flush mode as the loads see it. mk9_native_mix_verify = 1 runs the original on the same memory and compares;
+= 2 runs the original against itself. Both differ in ~0.1-0.2 % of calls, only in the ramp counter/gains at a ramp's
+end (the game thread starts the next ramp meanwhile): the native code matches. Needed: tools/direct_calls.py --redo
+after adding a hook (the generated code calls __imp__sub_X directly otherwise).
+Result: the sound thread 30.8 -> 16.1 % of a core (soak average); Scorpion's Lair practice (rig/prac_nonet.sh, 60 s,
+two rounds each) 55.1/54.9 -> 56.1/56.3 fps, late frames down a quarter to a third. Next in the sound thread:
+sub_82E2BB58 (resampler, ~8 % of a core) and sub_82E1FFB0 (filters, ~4 %); scalar code, less to win.

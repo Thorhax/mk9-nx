@@ -66,6 +66,8 @@ set(MK9_SOURCES
     src/me/mk9_me_hooks.cpp
     # CPU enhancement: Direct3D's GPU wait (sub_82BF5680) sleeps until the ring progresses (from usf4-nx).
     src/mk9_gpu_wait.cpp
+    # CPU enhancement: the sound engine's mix-matrix routine (sub_82E1E148, float16 gain ramps) native.
+    src/mk9_native_mix.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
     src/me/mk9_api_stubs.cpp
     # Render resolution per console mode (docked / handheld) and MSAA: sa2_render_height_*, sa2_msaa.

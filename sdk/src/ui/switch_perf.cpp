@@ -1053,6 +1053,7 @@ void ProfilerMain(void*) {
   // usf4-nx (0.7.4): the game's main thread ("Main XThread") is also sampled at every tick, so a single long frame
   // (~45 ms) gets ~45 of its samples instead of ~1 from the round robin over ~40 threads.
   size_t focus = kMaxThreads;
+  size_t hot[2] = {kMaxThreads, kMaxThreads};
   // Pauses one thread, takes its pc / lr / frame chain, resumes it. False when it could not be paused.
   const auto sample_slot = [](size_t idx, u32 h) -> bool {
       if (R_FAILED(svcSetThreadActivity(h, ThreadActivity_Paused))) {
@@ -1115,6 +1116,14 @@ void ProfilerMain(void*) {
       if (focus != kMaxThreads && focus != sampled) {
         if (const u32 h = g_slots[focus].handle.load()) sample_slot(focus, h);
       }
+      // mk9-nx (2026-10-25): the two busiest other threads of the last report too (the game's rendering thread and
+      // the host's render thread): what they did in a long frame, not ~1 sample of it.
+      for (size_t k = 0; k < 2; ++k) {
+        const size_t i = hot[k];
+        if (i != kMaxThreads && i != focus && i != sampled) {
+          if (const u32 h = g_slots[i].handle.load()) sample_slot(i, h);
+        }
+      }
     }
 
     const u64 now = armGetSystemTick();
@@ -1122,6 +1131,18 @@ void ProfilerMain(void*) {
     overlay.Step(now, tick_freq, true);
     if (report && now - report_start >= kReportSeconds * tick_freq) {
       Report(now - report_start, tick_freq, counters_last, kModes[mode_index].name);
+      hot[0] = hot[1] = kMaxThreads;
+      for (size_t i = 0; i < kMaxThreads; ++i) {
+        if (i == focus || !g_slots[i].handle.load() || g_slots[i].cpu < 10.0) {
+          continue;
+        }
+        if (hot[0] == kMaxThreads || g_slots[i].cpu > g_slots[hot[0]].cpu) {
+          hot[1] = hot[0];
+          hot[0] = i;
+        } else if (hot[1] == kMaxThreads || g_slots[i].cpu > g_slots[hot[1]].cpu) {
+          hot[1] = i;
+        }
+      }
       if (g_ab_active.load(std::memory_order_relaxed)) {
         mode_index = (mode_index + 1) % kModeCount;
         g_skip_mask.store(kModes[mode_index].mask, std::memory_order_relaxed);

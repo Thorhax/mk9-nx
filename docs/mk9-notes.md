@@ -444,3 +444,25 @@ native mixer does not: it writes audio buffers only. g_banjo_store_cards follows
 Verify (banjo_renut_store_cards_verify): 0 streams and 0 textures changed under clean cards on Hell and in a
 10-minute ladder soak with the boot movies. Result on Hell (v11 -> v12, two alternating runs each): render thread
 6.3 -> 4.8 ms a frame, 56.1 -> 56.7 fps, late frames 1,375 -> 1,275; the NRO grows 3.4 MB.
+
+## Codegen stage B: registers as locals (2026-10-26)
+non_volatile_as_local + elide_lr_stores (app/perf_overrides.toml): r14-r31, f14-f31 and v14-v31/v64-v127 as C++
+locals, no __savegprlr/__restgprlr calls, no ctx.lr store before each call. In the generated code ctx.r14-r31 uses
+fell from 1.45 M to 72 K, save/restore helper calls from 51,196 to 0 and ctx.lr stores from 294,749 to 0.
+- tools/read_before_write.py must run on code generated WITH the option (it matches the bare locals; on the stage-A
+  code it sees only the cr locals). The first build skipped that and crashed at boot: sub_8237AC64, a piece of a
+  parent function listed by an exception table, read the parent's r31 (now 0) and wrote near guest address 0.
+- Its report on the code with the option: 5 real fragments, marked share_registers in app/overrides.toml (0x8237AC64,
+  0x824D2994, 0x824D29A0, 0x82B36A74, 0x82BDCC70; callers now hand their locals over through ctx around the call).
+  The rest are left as they are: xor/subfe self-idioms (sub_8237B940, sub_8237BCD0, sub_82BDDCF8, sub_832D6D10),
+  vector register copies of dead values (sub_82DAxxxx, sub_8331xxxx, the stvx128 save runs sub_832F71C0/7508), data
+  decoded as code (sub_82E28680/F10/F54) and ~30 normal functions with a full prologue whose flagged reads are on
+  correlated paths (checked: sub_82BB1B78).
+- setjmp/longjmp: MK9's are library error paths; after a longjmp the setjmp caller's locals keep their latest values,
+  so tools/post_codegen.py patches the pch to log every guest longjmp. None in the soaks so far.
+- Checks: branch-to-self loops unchanged (13), no vector fmla/fmls in game code; 10-minute ladder soak with the store
+  cards' verify: no crash, no card miss, no longjmp.
+- Hell (v12 -> v13b, two alternating runs each): 56.2 -> 58.5 fps, late frames 1,332 -> 874, the game thread 15.5 ->
+  14.2 ms from Swap to Swap.
+non_argument_as_local stays off: tools/non_argument_audit.py lists vector arguments in v32-v63 across the sound
+engine's routines, r11 return values (sub_82FDF5D0, sub_82FDF608, indirect calls) and r2 reads: each needs a keep entry.

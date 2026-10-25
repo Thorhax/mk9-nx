@@ -40,7 +40,7 @@ longjmp_address = 0x82FE1020
 # in the gap (or continues only into a registered function it branches to: "then the registered tail"),
 # ends in a terminator and reads no register that is undefined at a function entry. The comment says
 # where the pointer is stored ("pointer at") or built ("built at", inside the code range).
-"0x8237AC64" = { }  # 4 instructions, pointer at 0x822B2BF0
+"0x8237AC64" = { share_registers = true }  # 4 instructions, pointer at 0x822B2BF0
 "0x8237EDD0" = { }  # 4 instructions, built at 0x82383164
 "0x8237EDE0" = { }  # 4 instructions, built at 0x82382F28 (+3 more)
 "0x8237EDF0" = { }  # 4 instructions, built at 0x82382F90
@@ -69,8 +69,8 @@ longjmp_address = 0x82FE1020
 "0x82479420" = { }  # 5 instructions, pointer at 0x83387A0C
 "0x82479598" = { }  # 5 instructions, pointer at 0x83387A38
 "0x824A25A8" = { }  # 1 instructions, pointer at 0x8338A6FC
-"0x824D2994" = { }  # 9 instructions, pointer at 0x8203BBE8
-"0x824D29A0" = { }  # 6 instructions, pointer at 0x8203BBF0
+"0x824D2994" = { share_registers = true }  # 9 instructions, pointer at 0x8203BBE8
+"0x824D29A0" = { share_registers = true }  # 6 instructions, pointer at 0x8203BBF0
 "0x8255DA58" = { }  # 4 instructions, pointer at 0x8205D0D4 (+14 more)
 "0x8255DB50" = { }  # 11 instructions, pointer at 0x82068FD8
 "0x8255FA80" = { }  # 9 instructions, pointer at 0x8205D0CC
@@ -268,3 +268,9 @@ longjmp_address = 0x82FE1020
 "0x832BB848" = { }  # 2 instructions, pointer at 0x822922C8
 "0x832BE0C8" = { }  # 11 in the gap, then the registered tail sub_832BE0F4, pointer at 0x82292440
 "0x832CC558" = { }  # 2 instructions, pointer at 0x8229621C (+1 more)
+
+# non_volatile_as_local (2026-10-25): pieces of a parent function that read its r14-r31 (tools/read_before_write.py on
+# the code generated with the option; sub_8237AC64 crashed the first such build at boot: r31 = 0). The three above
+# (0x8237AC64, 0x824D2994, 0x824D29A0) are marked where they are listed; these two are new:
+"0x82B36A74" = { share_registers = true }  # lwz r21,27296(r19) then the funclet entry addi r31,r12,-112
+"0x82BDCC70" = { share_registers = true }  # mr r3,r31 first: the parent's frame

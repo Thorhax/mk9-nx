@@ -19,8 +19,13 @@
 # fps in masseffect-nx) with a compiler barrier at every loop header (tools/loop_barriers.py, REQUIRED: GCC otherwise
 # turns guest polling loops into infinite loops) and direct calls to unhooked functions (tools/direct_calls.py: the
 # weak sub_X aliases cannot be inlined).
-# Not yet (stage B, each needs the audits sa2-nx made: tools/read_before_write.py, tools/non_argument_audit.py):
-# non_volatile_as_local, elide_lr_stores, non_argument_as_local.
+# Stage B (2026-10-25): non_volatile_as_local + elide_lr_stores (r14-r31, f14-f31, v14-v31/v64-v127 as C++ locals, no
+# __savegprlr/__restgprlr calls, no ctx.lr store before each call). tools/read_before_write.py --noreturn=82FE1020
+# (longjmp) on the stage A code: no non-volatile register read before written; only cr reads in setjmp (sub_82FE1340)
+# and sub_82BDCC70, which cr_as_local already ships. Native ctx.lr users: mk9_movie.cpp saves/restores it (harmless),
+# the console profiler's caller lines (now older return addresses). setjmp/longjmp: library error paths only
+# (0x82C3xxxx, 0x8319xxxx-0x832Axxxx); after a longjmp the setjmp caller's locals keep their latest values, so the
+# runtime logs every guest longjmp (pch template). Still not: non_argument_as_local (tools/non_argument_audit.py).
 cr_as_local = true
 ctr_as_local = true
 xer_as_local = true
@@ -29,3 +34,5 @@ skip_msr = true
 dform_disp_split = true
 fctiwz_inline = true
 fp_moves_modeless = true
+non_volatile_as_local = true
+elide_lr_stores = true

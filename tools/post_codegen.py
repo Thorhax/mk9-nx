@@ -47,6 +47,16 @@ def main():
     localized = os.path.join(APP, 'src', 'cpu', 'hot', 'localized.txt')
     if os.path.isfile(localized):  # usf4-nx: no localized native copies (yet)
         run(os.path.join(ROOT, 'tools', 'localize_native.py'), '--list', localized)
+    # mk9-nx (2026-10-25): every guest longjmp logged. With non_volatile_as_local the setjmp caller's r14-r31 / f14-f31
+    # locals keep their latest values after a longjmp instead of those at the setjmp (only ctx is restored); MK9's
+    # setjmp users are library error paths, and a log line says one ran. Idempotent.
+    pch = os.path.join(GEN, 'default', 'mk9_pch.h')
+    text = open(pch, encoding='utf-8').read()
+    anchor = '[[noreturn]] inline void ppc_longjmp(u32 guest_buf_addr, int val) {\n'
+    line = '  REXLOG_WARN("guest longjmp (jmp_buf {:08X}, value {})", guest_buf_addr, val);  // tools/post_codegen.py\n'
+    if anchor in text and anchor + line not in text:
+        with open(pch, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text.replace(anchor, anchor + line, 1))
     # mk9-nx (2026-10-25, as sa2-nx): the store cards, last: every guest store outside the stack marks its 4 KB page, so
     # Renut proves its cached vertex, index and texture copies without hashing them (banjo_renut_store_cards).
     # Idempotent; REX_STORE_CARDS_OFF compiles the cards out.

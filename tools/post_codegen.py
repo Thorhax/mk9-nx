@@ -9,8 +9,8 @@ manifest, a toml, the xex, the generator binary) and that would otherwise drop t
     any codegen key, else "classic";
   - optimised: tools/pch_no_volatile.py + tools/loop_barriers.py (required together) and tools/direct_calls.py on both
     generated trees;
-  - both: the localized native copies (tools/localize_native.py --list app/src/cpu/hot/localized.txt) and
-    app/generated/codegen_flavor.txt (the build's name in the first "[enh]" log line).
+  - both: the localized native copies (tools/localize_native.py --list app/src/cpu/hot/localized.txt), the store
+    cards (tools/store_cards.py) and app/generated/codegen_flavor.txt (the build's name in the first "[enh]" log line).
 
   python tools/post_codegen.py
 """
@@ -47,6 +47,10 @@ def main():
     localized = os.path.join(APP, 'src', 'cpu', 'hot', 'localized.txt')
     if os.path.isfile(localized):  # usf4-nx: no localized native copies (yet)
         run(os.path.join(ROOT, 'tools', 'localize_native.py'), '--list', localized)
+    # mk9-nx (2026-10-25, as sa2-nx): the store cards, last: every guest store outside the stack marks its 4 KB page, so
+    # Renut proves its cached vertex, index and texture copies without hashing them (banjo_renut_store_cards).
+    # Idempotent; REX_STORE_CARDS_OFF compiles the cards out.
+    run(os.path.join(ROOT, 'tools', 'store_cards.py'), '--gen', os.path.join(GEN, 'default'), '--hot', '-')
     # Round 7: the options added since round 6 are named too, so a console log tells the builds apart.
     extras = [name for key, name in (('non_volatile_as_local', 'non-volatile locals'), ('elide_lr_stores', 'no lr stores'),
                                      ('fp_moves_modeless', 'modeless fp moves'),

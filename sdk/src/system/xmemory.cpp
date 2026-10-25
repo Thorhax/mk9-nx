@@ -157,7 +157,7 @@ bool UnwatchHotReadPage(uint64_t host_address) {
 }  // namespace
 #endif
 
-u8* g_store_cards = nullptr;  // mk9-nx (2026-10-20): the store cards' table (xmemory.h); none in MK9
+u8* g_store_cards = nullptr;  // mk9-nx (2026-10-25, from sa2-nx): the store cards (xmemory.h)
 
 bool Memory::Initialize() {
   file_name_ = fmt::format("xenia_memory_{}", chrono::Clock::QueryHostTickCount());
@@ -243,11 +243,13 @@ bool Memory::Initialize() {
                               0x1FD00000, 4096, &heaps_.physical);
 
   // Protect the first and last 64kb of memory.
-  heaps_.v00000000.AllocFixed(0x00000000, 0x10000, 0x10000,
+  // mk9-nx (2026-10-25, from sa2-nx / banjo-nx): the first MB holds the store cards (xmemory.h: g_store_cards), which
+  // every guest store outside the stack writes: readable and writable whatever protect_zero says (a guest access there
+  // would have faulted before, so the game makes none). 4 KB allocations start above it.
+  heaps_.v00000000.AllocFixed(0x00000000, 0x100000, 0x10000,
                               memory::kMemoryAllocationReserve | memory::kMemoryAllocationCommit,
-                              !REXCVAR_GET(protect_zero)
-                                  ? memory::kMemoryProtectRead | memory::kMemoryProtectWrite
-                                  : memory::kMemoryProtectNoAccess);
+                              memory::kMemoryProtectRead | memory::kMemoryProtectWrite);
+  g_store_cards = virtual_membase_;
   heaps_.physical.AllocFixed(0x1FFF0000, 0x10000, 0x10000, memory::kMemoryAllocationReserve,
                              memory::kMemoryProtectNoAccess);
 
@@ -2371,6 +2373,9 @@ bool PhysicalHeap::TriggerCallbacks(std::unique_lock<std::recursive_mutex> globa
     return false;
   }
   length = std::min(length, heap_size_ - heap_relative_address);
+  // mk9-nx (2026-10-25, from sa2-nx / banjo-nx): a host write of physical memory (a file read into it, a decommit or
+  // release) marks its store cards as a guest store would.
+  MarkStoreCards(virtual_address, length);
   if (length == 0) {
     return false;
   }

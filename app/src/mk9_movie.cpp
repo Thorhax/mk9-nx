@@ -38,6 +38,7 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc.h>
+#include <rex/system/xmemory.h>
 
 extern "C" {
 #include "libavcodec/avcodec.h"
@@ -66,13 +67,18 @@ uint64_t Ld64(uint8_t* base, uint32_t a) {
   std::memcpy(&v, Raw(base, a), 8);
   return __builtin_bswap64(v);
 }
+// Every write of guest memory here marks its store cards (rex/system/xmemory.h), as the guest's stores would: the
+// decoded frames become textures Renut proves by them.
+void Mark(uint8_t* base, uint32_t a, size_t n) { rex::memory::MarkStoreCardsAt(base, a, uint32_t(n)); }
 void St32(uint8_t* base, uint32_t a, uint32_t v) {
   v = __builtin_bswap32(v);
   std::memcpy(Raw(base, a), &v, 4);
+  Mark(base, a, 4);
 }
 void St64(uint8_t* base, uint32_t a, uint64_t v) {
   v = __builtin_bswap64(v);
   std::memcpy(Raw(base, a), &v, 8);
+  Mark(base, a, 8);
 }
 
 bool Trace(std::atomic<int>& n) {
@@ -298,6 +304,7 @@ REX_HOOK_RAW(sub_82D255C0) {  // Init
   d->player = player;
   d->state = Ld32(base, out);
   std::memset(Raw(base, d->state), 0, kStateSize);
+  Mark(base, d->state, kStateSize);
   St32(base, d->state + 0, callback);
   St32(base, d->state + 4, callback_ctx);
   St32(base, d->state + 4228, player);
@@ -376,6 +383,7 @@ REX_HOOK_RAW(sub_82D25390) {  // GetOutput
   Frame f = std::move(d->ready.front());
   d->ready.pop_front();
   std::memcpy(Raw(base, buffer), f.yuv.data(), f.yuv.size());
+  Mark(base, buffer, f.yuv.size());
   if (size_out) St32(base, size_out, static_cast<uint32_t>(f.yuv.size()));
   if (flags_out) St32(base, flags_out, 0);
   if (time_out) St64(base, time_out, static_cast<uint64_t>(f.time_ms));

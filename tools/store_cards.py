@@ -41,6 +41,8 @@ STORE = re.compile(r'\b(REX_STORE_D_U(?:8|16|32|64)|REX_STORE_U(?:8|16|32|64)|RE
 VEC = 'simde_mm_store_si128((simde__m128i*)REX_RAW_ADDR(ea),'
 DCBZ = re.compile(r'(?<![\w,] )\bmemset\(\(void\*\)REX_RAW_ADDR\(ea\), 0, (?:32|128)\);')
 CAS = 'REX_GUEST_CAS(reinterpret_cast<'
+# mk9-nx (2026-10-25): MK9's codegen writes stwcx. / stdcx. as a plain compare-and-swap on the raw address.
+SYNC_CAS = 'cr0.eq = __sync_bool_compare_and_swap(reinterpret_cast<'
 EA_SET = re.compile(r'^\s*ea = (.*);\s*$')
 INSN = re.compile(r'^\s*// ')
 
@@ -153,13 +155,19 @@ def apply_line(lines, k, counts):
         else:
             line = line.replace(CAS, 'REX_GUEST_CAS_C(ea, reinterpret_cast<')
             counts['cas'] += 1
+    if SYNC_CAS in line and 'REX_RAW_ADDR(ea)' in line and 'REX_CARD(ea), ' + SYNC_CAS not in line:
+        if stack_ea(lines, k):
+            counts['stack'] += 1
+        else:
+            line = line.replace(SYNC_CAS, 'REX_CARD(ea), ' + SYNC_CAS)
+            counts['cas'] += 1
     return line
 
 
 UNDO = [
     (re.compile(r'\b(REX_STORE_D_U(?:8|16|32|64)|REX_STORE_U(?:8|16|32|64)|REX_STVLX|REX_STVRX|'
                 r'REX_MM_STORE_U(?:8|16|32|64)|BANJO_HOT_STORE_(?:D_)?U(?:8|16|32|64))_C\('), r'\1('),
-    (re.compile(r'REX_CARD\(ea\), (?=simde_mm_store_si128|memset\()'), ''),
+    (re.compile(r'REX_CARD\(ea\), (?=simde_mm_store_si128|memset\(|cr0\.eq = __sync_bool_compare_and_swap)'), ''),
     (re.compile(r'REX_GUEST_CAS_C\(ea, '), 'REX_GUEST_CAS('),
 ]
 

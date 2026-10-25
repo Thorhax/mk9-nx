@@ -60,10 +60,13 @@ inline T GuestPtr(u8* base, u32 guest_address) noexcept {
 
 class Memory;
 
-// mk9-nx (2026-10-20): the store cards' interface from sa2-nx 1.0.3 (banjo-nx's SDK of 2026-10-19), which Renut's
-// renderer calls. MK9's generated code marks no cards (tools/store_cards.py is not run) and Memory::Initialize keeps no
-// card table: g_store_cards stays nullptr, so these do nothing and Renut hashes its cached copies (g_banjo_store_cards
-// false, renut_engine/sa2_compat/sa2_compat.cpp).
+// mk9-nx (2026-10-25, from sa2-nx 1.0.3 / banjo-nx's SDK of 2026-10-19): the store cards (tools/store_cards.py). A
+// byte per 4 KB guest page at the guest address of its page number (the first MB of the guest window, which
+// Memory::Initialize keeps for them): every guest store outside the stack zeroes its page's card, and so do the host
+// writers of guest memory (MarkStoreCards: the CRT memory hooks, PhysicalHeap::TriggerCallbacks for file reads,
+// decommits and releases, MK9's movie decoder). Renut sets the cards of the pages it checks to 1 and proves its cached
+// vertex, index and texture copies by them (banjo_renut_store_cards). The guest window's base: nullptr before
+// Memory::Initialize.
 extern u8* g_store_cards;
 
 inline void MarkStoreCardsAt(u8* cards, u32 guest_address, u32 length) noexcept {
@@ -75,6 +78,17 @@ inline void MarkStoreCardsAt(u8* cards, u32 guest_address, u32 length) noexcept 
 
 inline void MarkStoreCards(u32 guest_address, u32 length) noexcept {
   MarkStoreCardsAt(g_store_cards, guest_address, length);
+}
+
+// The same for a host pointer into the guest window (a hook's argument); anything outside it is left alone.
+inline void MarkStoreCardsHost(const void* host, size_t length) noexcept {
+  u8* cards = g_store_cards;
+  if (!cards || !length) return;
+  const uint64_t offset = uint64_t(reinterpret_cast<const u8*>(host) - cards);
+  if (offset >= 0x100000000ull) return;
+  u32 guest = u32(offset);
+  if (detail::PhysicalHostOffset(guest) && guest >= 0xE0001000u) guest -= 0x1000u;
+  MarkStoreCards(guest, length > 0xFFFFFFFFull ? 0xFFFFFFFFu : u32(length));
 }
 
 enum SystemHeapFlag : uint32_t {

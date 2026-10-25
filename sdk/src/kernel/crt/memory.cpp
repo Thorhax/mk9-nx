@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include <rex/hook.h>
+#include <rex/system/xmemory.h>
 
 namespace rex::kernel::crt {
 
@@ -17,15 +18,22 @@ namespace rex::kernel::crt {
 // Standard memory operations
 // ---------------------------------------------------------------------------
 
+// mk9-nx (2026-10-25, from sa2-nx / banjo-nx): every write of guest memory here marks its store cards (rex/system/xmemory.h), as the guest
+// routines' stores would have.
+using rex::memory::MarkStoreCardsHost;
+
 static void* native_memcpy(void* dst, const void* src, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memcpy(dst, src, n);
 }
 
 static void* native_memmove(void* dst, const void* src, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memmove(dst, src, n);
 }
 
 static void* native_memset(void* dst, int val, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memset(dst, val, n);
 }
 
@@ -38,18 +46,22 @@ static void* native_memchr(const void* ptr, int val, size_t n) {
 // ---------------------------------------------------------------------------
 
 static void* native_XMemCpy(void* dst, const void* src, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memcpy(dst, src, n);
 }
 
 static void* native_XMemSet(void* dst, int val, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memset(dst, val, n);
 }
 
 static void* native_XMemSet128(void* dst, int val, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memset(dst, val, n);
 }
 
 static void* native_memset_vmx(void* dst, int val, size_t n) {
+  MarkStoreCardsHost(dst, n);
   return std::memset(dst, val, n);
 }
 
@@ -60,6 +72,7 @@ static void* native_memset_vmx(void* dst, int val, size_t n) {
 static int native_memcpy_s(void* dst, size_t dstsz, const void* src, size_t count) {
   if (!dst || !src || count > dstsz)
     return 22;  // EINVAL
+  MarkStoreCardsHost(dst, count);
   std::memcpy(dst, src, count);
   return 0;
 }
@@ -67,6 +80,7 @@ static int native_memcpy_s(void* dst, size_t dstsz, const void* src, size_t coun
 static int native_memmove_s(void* dst, size_t dstsz, const void* src, size_t count) {
   if (!dst || !src || count > dstsz)
     return 22;  // EINVAL
+  MarkStoreCardsHost(dst, count);
   std::memmove(dst, src, count);
   return 0;
 }

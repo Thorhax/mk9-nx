@@ -430,3 +430,17 @@ after adding a hook (the generated code calls __imp__sub_X directly otherwise).
 Result: the sound thread 30.8 -> 16.1 % of a core (soak average); Scorpion's Lair practice (rig/prac_nonet.sh, 60 s,
 two rounds each) 55.1/54.9 -> 56.1/56.3 fps, late frames down a quarter to a third. Next in the sound thread:
 sub_82E2BB58 (resampler, ~8 % of a core) and sub_82E1FFB0 (filters, ~4 %); scalar code, less to win.
+
+## Lock spin and the store cards (2026-10-25)
+The lava stage is the arena called Hell (Practice arena 8). kernel_critsec_spin = 1024 (app/mk9_switch_defaults.toml):
+56.5 against 55.8 fps there over three alternating runs each, about 10 % fewer late frames; 256 and 4096 no better.
+The render thread proved Renut's cached vertex and index copies by hashing them at their first use after every kick
+(~150 MB/s on Hell). The store cards (sa2-nx / banjo-nx) now replace that: tools/store_cards.py runs last in
+tools/post_codegen.py and makes every guest store outside the stack also zero its 4 KB page's card (the first MB of
+the guest window, reserved in Memory::Initialize). MK9's codegen writes stwcx. as __sync_bool_compare_and_swap on the
+raw address, a form the script did not know: it marks those too (892). Host writers mark theirs: the CRT memory hooks,
+PhysicalHeap::TriggerCallbacks (file reads, decommits), memexport results, the movie decoder (mk9_movie.cpp). The
+native mixer does not: it writes audio buffers only. g_banjo_store_cards follows the generated pch (REX_CARD).
+Verify (banjo_renut_store_cards_verify): 0 streams and 0 textures changed under clean cards on Hell and in a
+10-minute ladder soak with the boot movies. Result on Hell (v11 -> v12, two alternating runs each): render thread
+6.3 -> 4.8 ms a frame, 56.1 -> 56.7 fps, late frames 1,375 -> 1,275; the NRO grows 3.4 MB.

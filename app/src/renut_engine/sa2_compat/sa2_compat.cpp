@@ -5,8 +5,17 @@
 
 #include <rex/cvar.h>
 
-// mk9-nx (2026-10-20): MK9's generated code marks no store cards (sa2-nx: src/cpu/sa2_hot_guest.cpp decides).
+// mk9-nx (2026-10-25): whether the generated code marks the store cards (tools/store_cards.py ran, from
+// tools/post_codegen.py, and REX_STORE_CARDS_OFF is not set): Renut proves its cached copies by them only then
+// (banjo_renut_store_cards). Its pch defines REX_CARD.
+#if __has_include("../../../generated/default/mk9_pch.h")
+#include "../../../generated/default/mk9_pch.h"
+#endif
+#if defined(REX_CARD) && !defined(REX_STORE_CARDS_OFF)
+extern "C" const bool g_banjo_store_cards = true;
+#else
 extern "C" const bool g_banjo_store_cards = false;
+#endif
 
 // The store cards' host-side counters (banjo-nx's runtime, PC diagnostics): none.
 extern "C" uint64_t RexStoreCardsHostBytes(int) { return 0; }

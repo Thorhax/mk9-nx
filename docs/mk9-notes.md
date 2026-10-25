@@ -466,3 +466,10 @@ fell from 1.45 M to 72 K, save/restore helper calls from 51,196 to 0 and ctx.lr 
   14.2 ms from Swap to Swap.
 non_argument_as_local stays off: tools/non_argument_audit.py lists vector arguments in v32-v63 across the sound
 engine's routines, r11 return values (sub_82FDF5D0, sub_82FDF608, indirect calls) and r2 reads: each needs a keep entry.
+
+## LTO on the console (2026-10-26)
+MK9 had never run an LTO build (out/nx-dk is configured with MK9_SWITCH_LTO=OFF for quick rebuilds). out/nx-dk-lto is
+the same configuration with MK9_SWITCH_LTO=ON (4 LTRANS jobs; rig/build_lto.sh). Checks on the LTO ELF: the same 13
+branch-to-self loops, no vector fmla/fmls in game code; a 10-minute verify ladder soak clean. Hell, four alternating
+runs each (stage-B code both): 58.4 -> 58.9 fps, late frames 861 -> 737, the game thread 14.3 -> 13.8 ms. The NRO grows
+110 -> 122 MB. Release builds: the LTO tree.

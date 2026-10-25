@@ -13,6 +13,7 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
 #include <algorithm>
+#include <atomic>
 #include <string>
 
 #include <rex/chrono/chrono_steady_cast.h>
@@ -383,13 +384,57 @@ u32 RtlInitializeCriticalSectionAndSpinCount_entry(ppc_ptr_t<X_RTL_CRITICAL_SECT
   return xeRtlInitializeCriticalSectionAndSpinCount(cs, cs.guest_address(), spin_count);
 }
 
-void RtlEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
-  uint32_t cur_thread = XThread::GetCurrentThread()->guest_object();
+// mk9-nx (2026-10-26, from sa2-nx's second CPU round): the game's own calls of RtlEnterCriticalSection /
+// RtlTryEnterCriticalSection come in through raw exports (below), which have the guest context: r13 points at the
+// thread's KPCR, whose PRCB names the current KTHREAD (XThread writes guest_object() there when it creates the PCR).
+// That is the owner id, without the thread-local lookup of XThread::GetCurrentThread(). Host callers keep the lookup
+// (the _entry functions).
+REXCVAR_DEFINE_BOOL(kernel_critsec_pcr_owner, true, "Kernel",
+                    "RtlEnterCriticalSection / RtlTryEnterCriticalSection called by the game take the owner "
+                    "thread from the processor control region the guest context points at (r13) instead of "
+                    "looking the host thread up; false = the lookup");
+
+namespace {
+// The two settings, read once at the game's first critical section call (long after the configuration was loaded):
+// a cvar read is an out-of-line call, which is what this path is rid of.
+struct GuestCriticalSectionConfig {
+  bool pcr_owner;
+  uint32_t spin;
+};
+inline const GuestCriticalSectionConfig& GuestCriticalSection() {
+  static const GuestCriticalSectionConfig config{
+      REXCVAR_GET(kernel_critsec_pcr_owner),
+      static_cast<uint32_t>(std::max(REXCVAR_GET(kernel_critsec_spin), 0))};
+  return config;
+}
+
+inline uint32_t CriticalSectionOwner(PPCContext& ctx, uint8_t* base) {
+  if (!GuestCriticalSection().pcr_owner) [[unlikely]] {
+    return XThread::GetCurrentThread()->guest_object();
+  }
+  const auto* pcr = rex::memory::GuestPtr<const X_KPCR*>(base, ctx.r13.u32);
+  const uint32_t thread = static_cast<uint32_t>(pcr->prcb_data.current_thread);
+#if !defined(__SWITCH__)
+  // PC self-check: every call compares the id with the looked-up thread's.
+  if (thread != XThread::GetCurrentThread()->guest_object()) [[unlikely]] {
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8)
+      REXKRNL_ERROR("kernel_critsec_pcr_owner: KPCR thread {:08X} is not the current thread {:08X}", thread,
+                    XThread::GetCurrentThread()->guest_object());
+    return XThread::GetCurrentThread()->guest_object();
+  }
+#endif
+  return thread;
+}
+}  // namespace
+
+// default_spin: the tries for a section initialised without a spin count (kernel_critsec_spin).
+static void xeEnterCriticalSection(X_RTL_CRITICAL_SECTION* cs, uint32_t cur_thread, uint32_t default_spin) {
   uint32_t spin_count = cs->header.absolute * 256;
   if (spin_count == 0) {
     // Plain InitializeCriticalSection has no spin count: a contended acquire went straight to the full
     // waiter (object lookup, host condition variable, a context switch each way).
-    spin_count = static_cast<uint32_t>(std::max(REXCVAR_GET(kernel_critsec_spin), 0));
+    spin_count = default_spin;
   }
 
   if (cs->owning_thread == cur_thread) {
@@ -416,7 +461,7 @@ void RtlEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
   if (rex::thread::atomic_inc(&cs->lock_count) != 0) {
     // Create a full waiter.
     REX_SYS_COUNT(rex::syscount::kCritSecWait, 1);
-    xeKeWaitForSingleObject(reinterpret_cast<void*>(cs.host_address()), 8, 0, 0, nullptr);
+    xeKeWaitForSingleObject(reinterpret_cast<void*>(cs), 8, 0, 0, nullptr);
   }
 
   assert_true(cs->owning_thread == 0);
@@ -424,9 +469,12 @@ void RtlEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
   cs->recursion_count = 1;
 }
 
-u32 RtlTryEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
-  uint32_t thread = XThread::GetCurrentThread()->guest_object();
+void RtlEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
+  xeEnterCriticalSection(cs, XThread::GetCurrentThread()->guest_object(),
+                         static_cast<uint32_t>(std::max(REXCVAR_GET(kernel_critsec_spin), 0)));
+}
 
+static uint32_t xeTryEnterCriticalSection(X_RTL_CRITICAL_SECTION* cs, uint32_t thread) {
   if (rex::thread::atomic_cas(-1, 0, &cs->lock_count)) {
     // Able to steal the lock right away.
     cs->owning_thread = thread;
@@ -441,6 +489,23 @@ u32 RtlTryEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
 
   // Failed to acquire lock.
   return 0;
+}
+
+u32 RtlTryEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
+  return xeTryEnterCriticalSection(cs, XThread::GetCurrentThread()->guest_object());
+}
+
+// The raw exports' bodies: the argument as HostToGuestFunction would translate it, the owner from the context.
+void RtlEnterCriticalSection_raw(PPCContext& ctx, uint8_t* base) {
+  xeEnterCriticalSection(rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, ctx.r3.u32),
+                         CriticalSectionOwner(ctx, base), GuestCriticalSection().spin);
+}
+
+void RtlTryEnterCriticalSection_raw(PPCContext& ctx, uint8_t* base) {
+  const uint32_t taken = xeTryEnterCriticalSection(
+      rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, ctx.r3.u32), CriticalSectionOwner(ctx, base));
+  asm volatile("" ::: "memory");
+  ctx.r3.u64 = taken;
 }
 
 void RtlLeaveCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
@@ -635,9 +700,17 @@ REX_EXPORT(__imp__RtlInitializeCriticalSection,
            rex::kernel::xboxkrnl::RtlInitializeCriticalSection_entry)
 REX_EXPORT(__imp__RtlInitializeCriticalSectionAndSpinCount,
            rex::kernel::xboxkrnl::RtlInitializeCriticalSectionAndSpinCount_entry)
-REX_EXPORT(__imp__RtlEnterCriticalSection, rex::kernel::xboxkrnl::RtlEnterCriticalSection_entry)
-REX_EXPORT(__imp__RtlTryEnterCriticalSection,
-           rex::kernel::xboxkrnl::RtlTryEnterCriticalSection_entry)
+// Raw (mk9-nx, from sa2-nx): they need the guest context for the owner id (kernel_critsec_pcr_owner).
+REX_HOOK_RAW(__imp__RtlEnterCriticalSection) {
+  rex::kernel::xboxkrnl::RtlEnterCriticalSection_raw(ctx, base);
+}
+static rex::ppc::detail::PPCFuncRegistrar _ppc_reg___imp__RtlEnterCriticalSection(
+    "__imp__RtlEnterCriticalSection", &__imp__RtlEnterCriticalSection);
+REX_HOOK_RAW(__imp__RtlTryEnterCriticalSection) {
+  rex::kernel::xboxkrnl::RtlTryEnterCriticalSection_raw(ctx, base);
+}
+static rex::ppc::detail::PPCFuncRegistrar _ppc_reg___imp__RtlTryEnterCriticalSection(
+    "__imp__RtlTryEnterCriticalSection", &__imp__RtlTryEnterCriticalSection);
 REX_EXPORT(__imp__RtlLeaveCriticalSection, rex::kernel::xboxkrnl::RtlLeaveCriticalSection_entry)
 REX_EXPORT(__imp__RtlTimeToTimeFields, rex::kernel::xboxkrnl::RtlTimeToTimeFields_entry)
 REX_EXPORT(__imp__RtlTimeFieldsToTime, rex::kernel::xboxkrnl::RtlTimeFieldsToTime_entry)

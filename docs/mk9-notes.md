@@ -473,3 +473,16 @@ the same configuration with MK9_SWITCH_LTO=ON (4 LTRANS jobs; rig/build_lto.sh).
 branch-to-self loops, no vector fmla/fmls in game code; a 10-minute verify ladder soak clean. Hell, four alternating
 runs each (stage-B code both): 58.4 -> 58.9 fps, late frames 861 -> 737, the game thread 14.3 -> 13.8 ms. The NRO grows
 110 -> 122 MB. Release builds: the LTO tree.
+
+## Direct3D's constant copy native; critical sections by the KPCR (2026-10-26)
+The LTO build's profile on Hell (PROF_HELL2): the game's rendering thread had 5.6 % in sub_82BE9828, Direct3D's
+SetShaderConstantF copy (r6 vec4s from r5, any alignment, through lvlx/lvrx, to the device's shadow at
+(r3 + ((r4 + 120) << 4)) & ~15, then the 64-bit dirty word |= r7), called ~140,000 times a second.
+src/mk9_native_constants.cpp (mk9_cpu_native_constants, on; code hash checked) does it with one memmove, the dirty
+word's OR, store cards and the registers the original leaves. mk9_native_constants_verify: 8.4 M calls compared on
+Hell, 0 differ.
+kernel_critsec_pcr_owner (SDK, from sa2-nx): the game's RtlEnterCriticalSection / RtlTryEnterCriticalSection are raw
+exports that take the owner thread from the KPCR r13 points at instead of looking the host thread up (the PC build
+compares both on every call).
+Both (v14, LTO) against v13lto on Hell, two alternating runs each: 58.2 -> 58.6 fps, late frames 906 -> 830; ladder
+soak clean.

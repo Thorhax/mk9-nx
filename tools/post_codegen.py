@@ -47,6 +47,16 @@ def main():
     localized = os.path.join(APP, 'src', 'cpu', 'hot', 'localized.txt')
     if os.path.isfile(localized):  # usf4-nx: no localized native copies (yet)
         run(os.path.join(ROOT, 'tools', 'localize_native.py'), '--list', localized)
+    # mk9-nx (2026-10-26, sa2-nx's second CPU round): constants loaded from the image's read-only data folded
+    # (tools/ro_constants.py; the XEX's import records stay loads), then single-precision loads swapped in the vector
+    # unit (tools/float_loads.py, after ro_constants), and the trap helper out of line and cold (tools/pch_cold_traps.py).
+    if optimised:
+        gen = os.path.join(GEN, 'default')
+        run(os.path.join(ROOT, 'tools', 'ro_constants.py'), '--gen', gen, '--image',
+            os.path.join(ROOT, 'out', 'default_image.bin'), '--xex',
+            os.path.join(ROOT, 'assets', 'game_root', 'default.xex'))
+        run(os.path.join(ROOT, 'tools', 'float_loads.py'), '--gen', gen)
+        run(os.path.join(ROOT, 'tools', 'pch_cold_traps.py'), os.path.join(gen, 'mk9_pch.h'))
     # mk9-nx (2026-10-25): every guest longjmp logged. With non_volatile_as_local the setjmp caller's r14-r31 / f14-f31
     # locals keep their latest values after a longjmp instead of those at the setjmp (only ctx is restored); MK9's
     # setjmp users are library error paths, and a log line says one ran. Idempotent.

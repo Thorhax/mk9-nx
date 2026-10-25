@@ -486,3 +486,13 @@ exports that take the owner thread from the KPCR r13 points at instead of lookin
 compares both on every call).
 Both (v14, LTO) against v13lto on Hell, two alternating runs each: 58.2 -> 58.6 fps, late frames 906 -> 830; ladder
 soak clean.
+
+## Three post-codegen passes from sa2-nx (2026-10-26)
+tools/post_codegen.py now also runs (optimised flavour) tools/ro_constants.py (constants loaded from the image's
+read-only data folded: 14,837 float, 1,583 double and 5,111 integer loads in 82000400-822B3404; the XEX's 605 import
+records stay loads; out/default_image.bin is the generator's image dump), tools/float_loads.py (85,795 single-precision
+loads swapped in the vector unit instead of through an integer register) and tools/pch_cold_traps.py (the trap helper
+out of line and cold). Check of the folding on the console: rig/rdcheck.py read the running game's read-only data
+through sys-botbase mid-fight (2,764 KB) and compared it with the image dump: 0 words differ. Checks: the same
+branch-to-self loops, no vector fmla/fmls, a ladder soak clean. Hell (v14 -> v15, two alternating runs each): 58.8 ->
+59.2 fps, late frames 776 -> 677, the game thread 13.9 -> 13.6 ms.

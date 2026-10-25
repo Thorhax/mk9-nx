@@ -115,3 +115,11 @@ REXCVAR_DEFINE_BOOL(masseffect_native_set4_differences, true, "MASSEFFECT",
                     "NVK: only the descriptors that change are sent and rebound. Same result (self-checked "
                     "in NVK). Needs the Mesa build with patch_nvk_set4; false = as usual");
 
+
+// tools/ro_constants.py's PC check (off the Switch every folded load is also read and compared): a word of the image's
+// read-only data that is not what the executable holds.
+#include <rex/logging.h>
+extern "C" void RexRoMismatch(unsigned address) noexcept {
+  REXLOG_ERROR("ro_constants: the read-only word at {:08X} is not the executable's (a folded constant is wrong)",
+               address);
+}

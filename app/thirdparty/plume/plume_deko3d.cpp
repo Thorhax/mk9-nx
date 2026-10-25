@@ -89,6 +89,19 @@ namespace plume {
 
     Deko3DOptions g_deko3dOptions;
     void Deko3DSetOptions(const Deko3DOptions &options) { g_deko3dOptions = options; }
+    static thread_local bool *t_compileProbe = nullptr;
+    void Deko3DSetCompileProbe(bool *flag) { t_compileProbe = flag; }
+    // mk9-nx (2026-10-25, async pipelines): a priority lent to the uam thread while draws wait for background builds.
+    static std::atomic<int32_t> g_compileBoost{0};
+    static std::atomic<Deko3DDevice *> g_compileDevice{nullptr};
+    void Deko3DSetCompileBoost(int32_t priority) {
+        if (g_compileBoost.exchange(priority, std::memory_order_relaxed) == priority)
+            return;
+        if (Deko3DDevice *device = g_compileDevice.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(device->compileMutex);
+            device->applyCompilePriority();
+        }
+    }
 
     static Deko3DShaderCacheLookup g_cacheLookup;
     static Deko3DShaderCacheStore g_cacheStore;
@@ -898,6 +911,7 @@ namespace plume {
         }
         pthread_attr_destroy(&attr);
         pthread_detach(thread);
+        g_compileDevice.store(this, std::memory_order_release);
         logf("device ready: queue with zcull %s, depth targets %scompressed, vertex shader outputs %s, 1 MB of queue "
              "command memory; uam compile thread started", g_deko3dOptions.zcull ? "on" : "off",
              g_deko3dOptions.depthCompression ? "" : "not ", g_deko3dOptions.vsOutputs ? "pruned per pipeline" : "all written");
@@ -905,6 +919,7 @@ namespace plume {
     }
 
     Deko3DDevice::~Deko3DDevice() {
+        g_compileDevice.store(nullptr, std::memory_order_release);
         if (queue)
             dkQueueWaitIdle(queue);
         {
@@ -1437,6 +1452,8 @@ namespace plume {
         s32 priority = g_deko3dOptions.compilePriority;
         for (s32 p : compileWaiters)
             priority = std::min(priority, p);
+        if (const s32 boost = g_compileBoost.load(std::memory_order_relaxed); boost > 0 && priority > 0)
+            priority = std::min(priority, boost);
         if (priority != compileAppliedPriority && compileThreadHandle != 0 &&
             R_SUCCEEDED(svcSetThreadPriority(compileThreadHandle, u32(priority))))
             compileAppliedPriority = priority;
@@ -1662,6 +1679,10 @@ namespace plume {
             if (!have && g_cacheLookup && g_cacheLookup(key, dksh)) {
                 g_deko3dStats.shaderCacheHits++;
                 have = true;
+            }
+            if (!have && t_compileProbe) {
+                *t_compileProbe = true;  // mk9-nx (2026-10-25): nothing compiled or remembered (Deko3DSetCompileProbe)
+                return nullptr;
             }
             if (!have) {
                 std::string log;

@@ -31,6 +31,16 @@
 REXCVAR_DEFINE_BOOL(banjo_deko3d_variant_log, false, "Banjo/Renut",
                     "Write deko3d_variants.txt next to the executable: each graphics pipeline's vertex and pixel shader "
                     "and specialization constants (tools/deko3d_variant_cache.py builds the deko3d DKSH cache from it)");
+// mk9-nx (2026-10-25): see GetPipelineSlow.
+REXCVAR_DEFINE_BOOL(mk9_async_pipelines, true, "MK9/Renderer",
+                    "deko3d: a new pipeline whose shaders need compiling (not in the DKSH cache) is built by a prebuild "
+                    "worker; its draws are left out until it is done (a few frames) instead of the frame waiting for "
+                    "the compile (100-600 ms on the console)");
+REXCVAR_DEFINE_INT32(mk9_async_compile_boost, 0x3A, "MK9/Renderer",
+                     "deko3d, mk9_async_pipelines: the shader compile thread's priority while draws wait for a "
+                     "worker's build (Horizon: higher is lower; the game's threads are 0x3B, the render thread 0x2C). "
+                     "Its own (banjo_deko3d_compile_priority, 0x3E) left it behind the game's threads: compiles took "
+                     "twice as long. 0: off");
 #include <xxhash.h>
 #include <cstdio>  // banjo-nx (2026-10-20): the pipeline list file
 #if defined(_WIN32)
@@ -55,6 +65,9 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_variant_log, false, "Banjo/Renut",
 #include "renut_engine/gpu/guest/resources.h"
 #include "renut_engine/gpu/render/shader_library.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
+#if defined(PLUME_DEKO3D)
+#include <plume_deko3d.h>  // mk9-nx (2026-10-25): Deko3DSetCompileProbe
+#endif
 
 REXCVAR_DEFINE_STRING(renut_pipeline_list, "pipeline_list.bin", "Nuts&Bolts/Graphics",
                       "The pipelines the renderer has built, which it builds ahead of use at the "
@@ -114,6 +127,18 @@ struct SpecPending {
   plume::RenderPipeline *generic = nullptr;
 };
 std::unordered_map<uint64_t, SpecPending> g_spec_pending;
+// mk9-nx (2026-10-25, mk9_async_pipelines), render thread: keys a worker is building because their shaders needed a
+// compile, with the g_prebuild_epoch they were last asked at (their draws are skipped until it moves).
+struct AsyncPending {
+  PipelineKey key;
+  uint64_t epoch = 0;
+  std::chrono::steady_clock::time_point since;  // a job not done in kAsyncPatience is waited for as before
+  uint64_t queued_epoch = ~0ull;                // QueuedOrBuilding answered yes at this g_prebuild_epoch
+};
+constexpr auto kAsyncPatience = std::chrono::seconds(3);
+constexpr auto kAsyncPatienceQueued = std::chrono::seconds(10);  // a job queued or building: a compile backlog
+std::unordered_map<uint64_t, AsyncPending> g_async_pending;
+uint64_t g_async_skipped_draws = 0, g_async_started = 0;
 
 // Every draw looks its pipeline up: a byte-at-a-time hash of the whole key
 // cost as much as the rest of the lookup.
@@ -789,11 +814,14 @@ struct Prebuild {
   std::vector<std::unique_ptr<Job>> jobs;
   std::unordered_map<uint64_t, std::vector<Job *>> by_hash;
   std::deque<Job *> queue;       // shaders all made; may have been claimed since
+  // mk9-nx (2026-10-25, mk9_async_pipelines): jobs a draw waits for, taken first and in their order.
+  std::deque<Job *> urgent;
   // The shaders the game has made, and the jobs waiting for each of the others.
   std::unordered_set<const ShaderCacheEntry *> loaded;
   std::unordered_map<const ShaderCacheEntry *, std::vector<Job *>> waiting;
   u32 workers = 0;               // still running
   u32 building = 0;              // workers between taking a job and finishing it
+  u32 urgent_building = 0;       // of them, building a job from 'urgent' (mk9_async_compile_boost)
   bool stop = false;
   bool started = false;          // banjo-nx: the workers were started (StartWorkersLocked)
   // Host shaders for the queued jobs, shared by the workers; freed whenever the
@@ -801,6 +829,15 @@ struct Prebuild {
   std::unordered_map<const ShaderCacheEntry *, std::unique_ptr<plume::RenderShader>> shaders;
 };
 Prebuild g_prebuild;
+
+// mk9-nx (2026-10-25, mk9_async_compile_boost): the uam thread lent a priority while a draw waits for a worker (an
+// urgent job queued or building). Requires g_prebuild.mutex (the boost takes the compile mutex: always in this order).
+void UpdateCompileBoostLocked() {
+#if defined(PLUME_DEKO3D)
+  const bool waiting = !g_prebuild.urgent.empty() || g_prebuild.urgent_building != 0;
+  plume::Deko3DSetCompileBoost(waiting ? REXCVAR_GET(mk9_async_compile_boost) : 0);
+#endif
+}
 
 plume::RenderShader *PrebuildShader(const ShaderCacheEntry *entry) {
   if (!entry)
@@ -819,15 +856,21 @@ void PrebuildWorker() {
   banjo::renut_gpu::OnPrebuildWorkerStart();  // banjo-nx: its core and priority on the Switch
   std::unique_lock lock(g_prebuild.mutex);
   for (;;) {
-    g_prebuild.work.wait(lock, [] { return g_prebuild.stop || !g_prebuild.queue.empty(); });
+    g_prebuild.work.wait(lock, [] { return g_prebuild.stop || !g_prebuild.queue.empty() || !g_prebuild.urgent.empty(); });
     if (g_prebuild.stop)
       break;
-    Job &job = *g_prebuild.queue.front();
-    g_prebuild.queue.pop_front();
-    if (job.stage != Job::Stage::Pending)
+    const bool urgent = !g_prebuild.urgent.empty();
+    auto &from = urgent ? g_prebuild.urgent : g_prebuild.queue;
+    Job &job = *from.front();
+    from.pop_front();
+    if (job.stage != Job::Stage::Pending) {
+      UpdateCompileBoostLocked();
       continue;  // the render thread claimed it (TakePrebuilt)
+    }
     job.stage = Job::Stage::Building;
     ++g_prebuild.building;
+    g_prebuild.urgent_building += urgent ? 1 : 0;
+    UpdateCompileBoostLocked();
     PipelineInputs inputs;
     inputs.vertex_shader = PrebuildShader(static_cast<const ShaderCacheEntry *>(job.key.vertex_shader));
     inputs.pixel_shader = PrebuildShader(static_cast<const ShaderCacheEntry *>(job.key.pixel_shader));
@@ -838,8 +881,10 @@ void PrebuildWorker() {
     lock.lock();
     job.pipeline = std::move(pipeline);
     job.stage = Job::Stage::Done;
+    g_prebuild.urgent_building -= urgent ? 1 : 0;
+    UpdateCompileBoostLocked();
     g_prebuild_epoch.fetch_add(1, std::memory_order_release);  // banjo-nx: g_spec_pending asks again
-    if (--g_prebuild.building == 0 && g_prebuild.queue.empty())
+    if (--g_prebuild.building == 0 && g_prebuild.queue.empty() && g_prebuild.urgent.empty())
       g_prebuild.shaders.clear();
     g_prebuild.done.notify_all();
   }
@@ -1048,6 +1093,97 @@ plume::RenderPipeline *GetPipelineLocked(const PipelineKey &key, const PipelineI
   return result;
 }
 
+namespace {
+// mk9-nx (2026-10-25, mk9_async_pipelines): the list's job for a key, without waiting for it.
+enum class ListedState { NotListed, NotStarted, Building, Done };
+Job *FindListedLocked(const PipelineKey &key, uint64_t hash) {
+  auto it = g_prebuild.by_hash.find(hash);
+  if (it == g_prebuild.by_hash.end())
+    return nullptr;
+  for (Job *j : it->second) {
+    if (std::memcmp(&j->key, &key, sizeof(key)) == 0)
+      return j;
+  }
+  return nullptr;
+}
+ListedState PeekListed(const PipelineKey &key, uint64_t hash) {
+  std::lock_guard lock(g_prebuild.mutex);
+  const Job *j = FindListedLocked(key, hash);
+  if (!j)
+    return ListedState::NotListed;
+  return j->stage == Job::Stage::Pending    ? ListedState::NotStarted
+         : j->stage == Job::Stage::Building ? ListedState::Building
+                                            : ListedState::Done;
+}
+// The job not started yet goes to the queue's front (a draw waits for it). False when it cannot be queued (its
+// shaders not all made: a job no worker would take) or a worker took it meanwhile and finished.
+bool PrioritiseListed(const PipelineKey &key, uint64_t hash) {
+  std::lock_guard lock(g_prebuild.mutex);
+  Job *j = FindListedLocked(key, hash);
+  if (!j || j->stage == Job::Stage::Done)
+    return false;
+  if (j->stage == Job::Stage::Building)
+    return true;
+  if (j->shaders_missing)
+    return false;
+  auto &q = g_prebuild.queue;
+  q.erase(std::remove(q.begin(), q.end(), j), q.end());
+  if (std::find(g_prebuild.urgent.begin(), g_prebuild.urgent.end(), j) == g_prebuild.urgent.end())
+    g_prebuild.urgent.push_back(j);
+  UpdateCompileBoostLocked();
+  StartWorkersLocked();
+  g_prebuild.work.notify_one();
+  return true;
+}
+// A worker will get to it: building, or in a queue.
+bool QueuedOrBuilding(const PipelineKey &key, uint64_t hash) {
+  std::lock_guard lock(g_prebuild.mutex);
+  Job *j = FindListedLocked(key, hash);
+  if (!j)
+    return false;
+  if (j->stage == Job::Stage::Building)
+    return true;
+  return j->stage == Job::Stage::Pending &&
+         (std::find(g_prebuild.urgent.begin(), g_prebuild.urgent.end(), j) != g_prebuild.urgent.end() ||
+          std::find(g_prebuild.queue.begin(), g_prebuild.queue.end(), j) != g_prebuild.queue.end());
+}
+// For the log: the key's jobs' states.
+std::string DescribeJob(const PipelineKey &key, uint64_t hash) {
+  std::lock_guard lock(g_prebuild.mutex);
+  std::string out;
+  auto it = g_prebuild.by_hash.find(hash);
+  if (it == g_prebuild.by_hash.end())
+    return "no job";
+  for (Job *j : it->second) {
+    if (std::memcmp(&j->key, &key, sizeof(key)) != 0)
+      continue;
+    const bool urgent = std::find(g_prebuild.urgent.begin(), g_prebuild.urgent.end(), j) != g_prebuild.urgent.end();
+    const bool queued = std::find(g_prebuild.queue.begin(), g_prebuild.queue.end(), j) != g_prebuild.queue.end();
+    out += fmt::format("job stage {} shaders missing {} urgent {} queued {}; ", int(j->stage), j->shaders_missing,
+                       urgent, queued);
+  }
+  return out.empty() ? "no job of the key" : out;
+}
+void ClaimListed(const PipelineKey &key, uint64_t hash) {
+  std::lock_guard lock(g_prebuild.mutex);
+  if (Job *j = FindListedLocked(key, hash); j && j->stage == Job::Stage::Pending)
+    j->stage = Job::Stage::Done;
+}
+// The draw left out while a worker builds its pipeline; the key is asked again once g_prebuild_epoch moves.
+plume::RenderPipeline *StartAsync(const PipelineKey &key, uint64_t hash, bool log) {
+  g_async_pending[hash] = {key, g_prebuild_epoch.load(std::memory_order_acquire), std::chrono::steady_clock::now()};
+  ++g_async_skipped_draws;
+  if (log && (++g_async_started <= 64 || (g_async_started & 63) == 0)) {
+    const auto *vs = static_cast<const ShaderCacheEntry *>(key.vertex_shader);
+    const auto *ps = static_cast<const ShaderCacheEntry *>(key.pixel_shader);
+    RGPU_INFO("[mk9] async pipeline {}: VS {:016X} PS {:016X} needs a compile, built by a worker ({} draws skipped "
+              "so far, mk9_async_pipelines)",
+              g_async_started, vs ? vs->hash : 0, ps ? ps->hash : 0, g_async_skipped_draws);
+  }
+  return nullptr;
+}
+} // namespace
+
 static plume::RenderPipeline *GetPipelineSlow(const PipelineKey &key, const PipelineInputs &inputs, uint8_t &kind,
                                               uint64_t &memo_epoch) {
   const uint64_t hash = HashKey(key);
@@ -1106,9 +1242,122 @@ static plume::RenderPipeline *GetPipelineSlow(const PipelineKey &key, const Pipe
     }
     return pipeline;
   }
+  // mk9-nx (2026-10-25, mk9_async_pipelines): a key a worker builds because it needed a compile: skipped until done.
+  if (auto pend = g_async_pending.find(hash);
+      pend != g_async_pending.end() && std::memcmp(&pend->second.key, &key, sizeof(key)) == 0) {
+    const uint64_t epoch = g_prebuild_epoch.load(std::memory_order_acquire);
+    const auto waited_for = std::chrono::steady_clock::now() - pend->second.since;
+    bool patient = waited_for < kAsyncPatience;
+    if (!patient && waited_for < kAsyncPatienceQueued) {
+      if (pend->second.queued_epoch != epoch && QueuedOrBuilding(key, hash))
+        pend->second.queued_epoch = epoch;
+      patient = pend->second.queued_epoch == epoch;
+    }
+    if (pend->second.epoch == epoch && patient) {
+      ++g_async_skipped_draws;
+      return nullptr;
+    }
+    std::unique_ptr<plume::RenderPipeline> ready;
+    const SpecState state = SpecialisedPipeline(key, hash, *inputs.layout, ready);
+    if (state == SpecState::Pending && !patient) {
+      // Never queued (its shaders not reported made?) or a long compile: as before, the frame waits for it.
+      static uint32_t logged = 0;
+      if (logged++ < 16)
+        RGPU_WARN("[mk9] async pipeline not done after {} ms: waited for (mk9_async_pipelines; {})",
+                  std::chrono::duration_cast<std::chrono::milliseconds>(waited_for).count(), DescribeJob(key, hash));
+      g_async_pending.erase(pend);
+      std::unique_ptr<plume::RenderPipeline> waited;
+      bool claimed_late = false;
+      if (TakePrebuilt(key, hash, waited, claimed_late) || !(waited = Build(key, inputs))) {
+        if (!waited)
+          return nullptr;
+      } else if (!claimed_late) {
+        g_list.Append(key, hash, *inputs.layout);
+      }
+      bucket.push_back({key, std::move(waited)});
+      g_last_key = key;
+      g_last_pipeline = bucket.back().pipeline.get();
+      return g_last_pipeline;
+    }
+    if (state == SpecState::Pending) {
+      pend->second.epoch = epoch;
+      ++g_async_skipped_draws;
+      return nullptr;
+    }
+    g_async_pending.erase(pend);
+    if (state == SpecState::Ready && ready) {
+      g_list.Append(key, hash, *inputs.layout);
+      bucket.push_back({key, std::move(ready)});
+      g_last_key = key;
+      g_last_pipeline = bucket.back().pipeline.get();
+      return g_last_pipeline;
+    }
+    // Failed: built here below, as before.
+  }
   std::unique_ptr<plume::RenderPipeline> pipeline;
   bool claimed = false;
+#if defined(PLUME_DEKO3D)
+  // mk9-nx (2026-10-25, mk9_async_pipelines): a key no worker is building is made here only when none of its shaders
+  // needs a compile (a probe that compiles nothing); otherwise a worker builds it (the list's job, moved to the
+  // queue's front, or a job of its own) and its draws are left out until it is done. A key a worker is building is
+  // not waited for either.
+  if (IsDeko3D() && REXCVAR_GET(mk9_async_pipelines)) {
+    const ListedState listed = PeekListed(key, hash);
+    if (listed == ListedState::Building)
+      return StartAsync(key, hash, false);
+    if (listed == ListedState::NotListed || listed == ListedState::NotStarted) {
+      bool needs_compile = false;
+      plume::Deko3DSetCompileProbe(&needs_compile);
+      std::unique_ptr<plume::RenderPipeline> made = Build(key, inputs);
+      plume::Deko3DSetCompileProbe(nullptr);
+      if (needs_compile) {
+        if (listed == ListedState::NotStarted) {
+          if (PrioritiseListed(key, hash))
+            return StartAsync(key, hash, true);
+        } else {
+          std::unique_ptr<plume::RenderPipeline> ready;
+          if (SpecialisedPipeline(key, hash, *inputs.layout, ready) == SpecState::Pending) {
+            PrioritiseListed(key, hash);  // its new job, ahead of the list's
+            return StartAsync(key, hash, true);
+          }
+        }
+      } else if (made) {
+        // Made whole: a listed job not started is the render thread's now (as TakePrebuilt claims it).
+        if (listed == ListedState::NotStarted)
+          ClaimListed(key, hash);
+        else
+          g_list.Append(key, hash, *inputs.layout);
+        bucket.push_back({key, std::move(made)});
+        g_last_key = key;
+        g_last_pipeline = bucket.back().pipeline.get();
+        return g_last_pipeline;
+      }
+    }
+  }
+#endif
   if (!TakePrebuilt(key, hash, pipeline, claimed)) {
+#if defined(PLUME_DEKO3D)
+    // mk9-nx (2026-10-25, diagnostic): a compile the render thread still waits for, and why.
+    if (IsDeko3D() && REXCVAR_GET(mk9_async_pipelines)) {
+      static uint32_t logged = 0;
+      if (logged < 48) {
+        bool needs_compile = false;
+        plume::Deko3DSetCompileProbe(&needs_compile);
+        std::unique_ptr<plume::RenderPipeline> probe = Build(key, inputs);
+        plume::Deko3DSetCompileProbe(nullptr);
+        if (needs_compile) {
+          ++logged;
+          const auto *vs = static_cast<const ShaderCacheEntry *>(key.vertex_shader);
+          const auto *ps = static_cast<const ShaderCacheEntry *>(key.pixel_shader);
+          RGPU_WARN("[mk9] sync pipeline compile: VS {:016X} PS {:016X}, claimed {}, listed state {}, spec {}",
+                    vs ? vs->hash : 0, ps ? ps->hash : 0, claimed, int(PeekListed(key, hash)), Specialised(key));
+        } else if (probe) {
+          pipeline = std::move(probe);
+        }
+      }
+    }
+    if (!pipeline)
+#endif
     pipeline = Build(key, inputs);
     if (pipeline && !claimed)
       g_list.Append(key, hash, *inputs.layout);

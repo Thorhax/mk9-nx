@@ -718,4 +718,11 @@ namespace plume {
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (barriers() reads it per call).
     extern Deko3DOptions g_deko3dOptions;
     inline const Deko3DOptions &Deko3DGetOptions() { return g_deko3dOptions; }
+    // mk9-nx (2026-10-25, async pipelines): while set (this thread only), a shader variant that would have to be
+    // compiled is not: *flag becomes true and the pipeline comes back invalid. Variants already compiled or in the DKSH
+    // cache load as usual, so a pipeline that needs no compile is made whole.
+    void Deko3DSetCompileProbe(bool *flag);
+    // mk9-nx (2026-10-25, async pipelines): the uam thread's priority while draws wait for background builds (lent as
+    // a waiting thread's is; 0: its own).
+    void Deko3DSetCompileBoost(int32_t priority);
 };

@@ -392,3 +392,22 @@ over 100 ms 44 -> 14 for the same 20 minutes. Every one of the 14 is at boot or 
 30-70 MB read and new files opened); minutes 9-19, all fighting, had none. Only 12 shaders compiled in SOAK8's 41
 minutes (PC-built cache), so background compiling of the bound-type variants was not done: nothing left to win.
 Measure hitches with NONET=1 from now on.
+
+## Pipelines whose shaders need a compile are built in the background (2026-10-25)
+`mk9_async_pipelines` (default on, deko3d): GetPipelineSlow first builds a new key with a compile probe
+(plume Deko3DSetCompileProbe): a variant that would need compiling is not compiled, the pipeline comes back invalid and
+the probe says so. A key that needs no compile is made at once as before. One that does goes to a prebuild worker (the
+list's job, or a job of its own) at the front of a new `urgent` queue, which workers take first; its draws are left
+out until the worker is done (g_prebuild_epoch moves). After 3 s (10 s while the job is queued or building) the frame
+waits for it as before ("[mk9] async pipeline not done after N ms", with the job's state).
+`mk9_async_compile_boost` (default 0x3A): while an urgent job is queued or building, the uam thread runs at this
+priority instead of its own 0x3E, below the game's threads (0x3B). Without it background compiles took 310 ms on
+average against 75-190 ms for one the render thread waited for (lending its priority), and the urgent queue backed up
+past 10 s at a fight intro.
+Console, empty DKSH cache, 5 minutes (KNP, NONET): v6 waited 2.4-3.8 s per freeze; async alone (SOAK17C) still froze
+up to 3.4 s, 14 timeouts, all jobs queued or building; with the boost (SOAK18C) 0 timeouts, the worst frame after boot
+367 ms, minute 2 at 54.2 fps (47.1), draws left out 38.9k -> 25.4k. What it costs: scenery missing for a moment at
+the first intro of a stage. Full cache (SOAK16W, 20 minutes): no draw left out, no long frame in a fight (v6 had two
+compile freezes mid-fight).
+Seen in the soaks, not from this: the left half of the rooftop arena's floor (by the portal) is pale pinkish-white
+(SOAK8 on v4 shows it too); not yet checked against real footage.

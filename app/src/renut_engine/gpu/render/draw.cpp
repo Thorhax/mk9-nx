@@ -67,6 +67,22 @@ REXCVAR_DEFINE_INT32(banjo_renut_diag_draw_log_s, 0, "Banjo/Renut",
 REXCVAR_DEFINE_STRING(banjo_renut_diag_blend_skip_exclude, "", "Banjo/Renut",
                       "Diagnostic: pixel shader hashes (hex, comma separated) banjo_gpu_blend_skip leaves alone");
 
+// mk9-nx (2026-10-24, mk9_diag_flip_cull_ps): set by DrawStateLocked for the draw MakeKey keys.
+bool g_diag_flip_cull = false;
+// mk9-nx (2026-10-24): see DrawStateLocked.
+REXCVAR_DEFINE_STRING(mk9_diag_skip_ps, "", "MK9/Renderer",
+                      "Diagnostic: pixel shader hashes (hex, comma separated) whose draws are dropped");
+REXCVAR_DEFINE_STRING(mk9_diag_flip_cull_ps, "", "MK9/Renderer",
+                      "Diagnostic: pixel shader hashes (hex, comma separated) whose draws cull the other faces");
+REXCVAR_DEFINE_STRING(mk9_diag_dump_depth, "", "MK9/Renderer",
+                      "Diagnostic: '<texture va hex>@<seconds>': the first depth resolve into that texture after that "
+                      "many seconds writes its float copy to depth_dump.f32 (width, height, then floats)");
+REXCVAR_DEFINE_INT32(mk9_diag_trace_after_s, 0, "MK9/Renderer",
+                     "Diagnostic: mk9_diag_trace_ps logs only draws this many seconds after start");
+REXCVAR_DEFINE_STRING(mk9_diag_trace_ps, "", "MK9/Renderer",
+                      "Diagnostic: pixel shader hashes (hex, comma separated) whose draws log their textures' fetch "
+                      "constants ([texlog], the first 8 draws of each)");
+
 // sa2-nx (2026-10-20): see DrawStateLocked.
 REXCVAR_DEFINE_BOOL(sa2_renut_chain_reuse, true, "SA2/Renderer",
                     "Renut's renderer (with sa2_renut_snapshot_deltas): a draw of the delta chain takes the previous "
@@ -3196,6 +3212,8 @@ PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const Sha
   key.stencil_ref_mask = t.depth ? u32(dev.m_ValuesPacket.StencilRefMask) & 0xFFFFFF : 0;
   key.stencil_ref_mask_bf = t.depth ? u32(dev.m_ValuesPacket.StencilRefMaskBF) & 0xFFFFFF : 0;
   key.mode_control = u32(cp.ModeControl) & 0x7;
+  if (g_diag_flip_cull && (key.mode_control & 3) && (key.mode_control & 3) != 3)
+    key.mode_control ^= 3u;
   key.alpha_to_coverage = (u32(cp.ColorControl) >> 4) & 1;
   if (primitive == kRectangleList) {
     if (State().rectangle_list_gs)
@@ -4248,6 +4266,24 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   }
   if (declaration)
     __builtin_prefetch(declaration);
+  // mk9-nx (2026-10-24, mk9_diag_skip_ps): finding a draw by leaving it out.
+  {
+    static const auto parse = [](const std::string &list) {
+      std::unordered_set<uint64_t> out;
+      for (size_t at = 0; at < list.size();) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        if (end > at)
+          out.insert(std::strtoull(list.substr(at, end - at).c_str(), nullptr, 16));
+        at = end + 1;
+      }
+      return out;
+    };
+    static const std::unordered_set<uint64_t> skip = parse(REXCVAR_GET(mk9_diag_skip_ps));
+    if (!skip.empty() && ps && skip.count(ps->hash))
+      return true;
+    static const std::unordered_set<uint64_t> flip = parse(REXCVAR_GET(mk9_diag_flip_cull_ps));
+    g_diag_flip_cull = !flip.empty() && ps && flip.count(ps->hash);
+  }
   if (!vs || !declaration) {
     static uint32_t logged = 0;
     if (LogLimited(logged, 16)) {
@@ -4413,6 +4449,75 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   sc.flt_max = std::numeric_limits<float>::max();  // banjo-nx: 0x7F7FFFFF, the clamps' bound (shader_common.h)
   const u32 texture_mask =
       (vs->entry ? vs->entry->textureFetchMask : 0) | (ps && ps->entry ? ps->entry->textureFetchMask : 0);
+  // mk9-nx (2026-10-24, mk9_diag_trace_ps): the traced draws' texture fetch constants.
+  {
+    static const std::unordered_set<uint64_t> trace = [] {
+      std::unordered_set<uint64_t> out;
+      const std::string list = REXCVAR_GET(mk9_diag_trace_ps);
+      for (size_t at = 0; at < list.size();) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        if (end > at)
+          out.insert(std::strtoull(list.substr(at, end - at).c_str(), nullptr, 16));
+        at = end + 1;
+      }
+      return out;
+    }();
+    static std::unordered_map<uint64_t, uint32_t> traced;
+    static const auto trace_start = std::chrono::steady_clock::now();
+    static const int32_t trace_after = REXCVAR_GET(mk9_diag_trace_after_s);
+    if (ps && trace.count(ps->hash) &&
+        std::chrono::steady_clock::now() - trace_start >= std::chrono::seconds(trace_after) &&
+        traced[ps->hash]++ < 8) {
+      {
+        auto f = [device_state](u32 reg, u32 c) {
+          return float(*reinterpret_cast<const be_f32 *>(device_state + 6016 + reg * 16 + c * 4));
+        };
+        std::string text;
+        for (u32 reg : {1u, 2u, 18u, 19u, 20u, 21u, 22u, 23u, 253u, 254u, 255u})
+          text += fmt::format(" c{} {} {} {} {}", reg, f(reg, 0), f(reg, 1), f(reg, 2), f(reg, 3));
+        RGPU_INFO("[texlog] ps {:016X} viewport z scale {} offset {} vte {:08X} constants{}", ps->hash,
+                  float(device.dev().m_ValuesPacket.VportZScale), float(device.dev().m_ValuesPacket.VportZOffset),
+                  u32(device.dev().m_ControlPacket.VteControl), text);
+        auto vf = [device_state](u32 reg, u32 c) {
+          return float(*reinterpret_cast<const be_f32 *>(device_state + 1920 + reg * 16 + c * 4));
+        };
+        std::string vtext;
+        for (u32 reg = 0; reg < 26; ++reg)
+          vtext += fmt::format(" c{} {} {} {} {}", reg, vf(reg, 0), vf(reg, 1), vf(reg, 2), vf(reg, 3));
+        const u32 bools = *reinterpret_cast<const be_u32 *>(device_state + 10112);
+        RGPU_INFO("[texlog] vs {:016X} bools0 {:08X} mode {:08X} vte {:08X} clip {:08X} depth {:08X} constants{}",
+                  vs->hash, bools, u32(*reinterpret_cast<const be_u32 *>(device_state + 0x2934 + 0x14)),
+                  u32(*reinterpret_cast<const be_u32 *>(device_state + 0x2934 + 0x18)),
+                  u32(*reinterpret_cast<const be_u32 *>(device_state + 0x2934 + 0x10)),
+                  u32(*reinterpret_cast<const be_u32 *>(device_state + 0x2934)), vtext);
+      }
+      for (u32 r = 0; r < d3d::kTextureFetchSlots; ++r) {
+        if (!(texture_mask & (1u << r)))
+          continue;
+        const u32 va = device.U32(d3d::kDeviceOffsetTextures + r * 4);
+        const auto *w = va ? GuestPtr<const be_u32>(va + 0x1C) : nullptr;  // BaseTexture::Format
+        // The texture's guest bytes (128 KB from its base), once per texture: fetch words, then data.
+        static std::unordered_set<u32> dumped;
+        if (w && dumped.insert(va).second) {
+          const u32 base = (u32(w[1]) & 0xFFFFF000u) & 0x1FFFFFFFu;
+          if (const u8 *data = base ? GuestPhysicalPtr<const u8>(base) : nullptr) {
+            if (FILE *f = std::fopen(fmt::format("texdump_{:08X}.bin", va).c_str(), "wb")) {
+              u32 words[6];
+              for (int i = 0; i < 6; ++i)
+                words[i] = u32(w[i]);
+              std::fwrite(words, 4, 6, f);
+              std::fwrite(data, 1, 128 * 1024, f);
+              std::fclose(f);
+            }
+          }
+        }
+        RGPU_INFO("[texlog] vs {:016X} ps {:016X} slot {} texture {:08X} fetch {:08X} {:08X} {:08X} {:08X} {:08X} "
+                  "{:08X}",
+                  vs->hash, ps->hash, r, va, w ? u32(w[0]) : 0, w ? u32(w[1]) : 0, w ? u32(w[2]) : 0,
+                  w ? u32(w[3]) : 0, w ? u32(w[4]) : 0, w ? u32(w[5]) : 0);
+      }
+    }
+  }
   g_handover_targets = &targets;  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
   // sa2-nx (2026-10-20, sa2_renut_chain_reuse): the previous chain draw's texture and sampler words when FillTextures'
   // memo would answer every bound slot as it did then: the device's fetch constants and texture words unchanged
@@ -5255,6 +5360,48 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
   cmd->setGraphicsPushConstants(0, &push, 0, sizeof(push));
   cmd->drawInstanced(3, 1, 0, 0);
   TransitionTextureLocked(dest, plume::RenderTextureLayout::SHADER_READ);
+  // mk9-nx (2026-10-24, mk9_diag_dump_depth): the resolved float depth, read back once.
+  {
+    static const std::string want = REXCVAR_GET(mk9_diag_dump_depth);
+    static const u32 want_va = want.empty() ? 0 : u32(std::strtoul(want.c_str(), nullptr, 16));
+    static const double want_s = want.find('@') == std::string::npos ? 0.0 : std::atof(want.c_str() + want.find('@') + 1);
+    static const auto start = std::chrono::steady_clock::now();
+    static bool dumped = false;
+    if (want_va && !dumped && dest->guest_va == want_va && dest->texture &&
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= want_s) {
+      dumped = true;
+      const uint32_t w = dest->alloc_width, h = dest->alloc_height;
+      const uint32_t pitch = (w + 63) & ~63u;
+      const uint64_t bytes = uint64_t(pitch) * h * 4;
+      auto buffer = s.device->createBuffer(plume::RenderBufferDesc::ReadbackBuffer(bytes));
+      if (buffer) {
+        cmd->barriers(plume::RenderBarrierStage::COPY,
+                      plume::RenderTextureBarrier(dest->texture.get(), plume::RenderTextureLayout::COPY_SOURCE));
+        cmd->copyTextureRegion(
+            plume::RenderTextureCopyLocation::PlacedFootprint(buffer.get(), plume::RenderFormat::R32_FLOAT, w, h, 1,
+                                                              pitch, 0),
+            plume::RenderTextureCopyLocation::Subresource(dest->texture.get(), 0));
+        cmd->barriers(plume::RenderBarrierStage::GRAPHICS,
+                      plume::RenderTextureBarrier(dest->texture.get(), plume::RenderTextureLayout::SHADER_READ));
+        g_bound.framebuffer = nullptr;
+        g_bound.pipeline = nullptr;
+        g_bound.layout = false;
+        g_bound.viewport_set = false;
+        detail::SubmitAndWaitLocked(s);
+        if (const auto *data = static_cast<const float *>(buffer->map())) {
+          if (FILE *f = std::fopen("depth_dump.f32", "wb")) {
+            std::fwrite(&w, 4, 1, f);
+            std::fwrite(&h, 4, 1, f);
+            for (uint32_t y = 0; y < h; ++y)
+              std::fwrite(data + size_t(y) * pitch, 4, w, f);
+            std::fclose(f);
+          }
+          buffer->unmap();
+          RGPU_INFO("[mk9] mk9_diag_dump_depth: {:08X} {}x{} written to depth_dump.f32", want_va, w, h);
+        }
+      }
+    }
+  }
 
   // The draw path binds its own layout, pipeline, targets and viewport again.
   g_bound.framebuffer = nullptr;

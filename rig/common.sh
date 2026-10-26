@@ -11,7 +11,15 @@ mkdir -p "$NET" "$T"
 sb() { python3 "$R/sb.py" "$@"; }
 ftp() { python3 "$R/ftp.py" "$@"; }
 # Closes the running title (HOME, X, A). On an idle home menu the A launches the selected title instead.
-close_title() { sb "click HOME" "sleep 1.5" "click X" "sleep 1" "click A" "sleep 4"; }
+# Then checks the console still answers: a fatal in a system process (2011-0301 in overlayDisp once came during this
+# close) stops sys-botbase, and the run stops with the time in <MK9_LOGS>/console_lost.log.
+close_title() {
+  sb "click HOME" "sleep 1.5" "click X" "sleep 1" "click A" "sleep 4"
+  if ! timeout 20 python3 "$R/sb.py" title > /dev/null 2>&1; then
+    echo "$(date '+%F %T') console not answering after closing the title ($0)" | tee -a "$L/console_lost.log" >&2
+    exit 2
+  fi
+}
 # put_cfg <name | dir>: configs/<name>/mk9.toml (or <dir>/mk9.toml) to the SD, @PC_IP@ filled in. No-op without one.
 put_cfg() {
   [ -n "$1" ] || return 0

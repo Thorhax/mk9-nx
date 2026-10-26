@@ -29,6 +29,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <unordered_map>
 #include <vector>
 
@@ -101,8 +102,11 @@ struct Decoder {
   std::deque<Frame> ready;
   bool eof = false;
   uint64_t frames_in = 0, frames_out = 0;
-  // Output times: the data callback gives a frame's time only now and then (the original decoder fills the rest
-  // in: 0, 33, 66, 100 ms ...). A known time anchors the count; the others are anchor + frames * 1000 / fps.
+  // Output times. The data callback gives each compressed frame's time in decode order, and with B frames FFmpeg
+  // hands that time on to the display-order frame (out: 133, 100, 200, 166 ms ...; the original decoder's are 100,
+  // 133, 166, 200). B frames only reorder within the stream, so each decoded frame takes the earliest time not yet
+  // given out. A compressed frame without a time gets the last known one + frames * 1000 / fps.
+  std::priority_queue<int64_t, std::vector<int64_t>, std::greater<int64_t>> times;
   int64_t anchor_ms = 0, since_anchor = 0;
   uint32_t fps = 30;
 
@@ -183,13 +187,12 @@ Piece CallData(PPCContext& ctx, uint8_t* base, const Decoder& d) {
 void Collect(Decoder& d) {
   while (avcodec_receive_frame(d.av, d.frame) == 0) {
     Frame f;
-    const int64_t known = d.frame->best_effort_timestamp != AV_NOPTS_VALUE ? d.frame->best_effort_timestamp : d.frame->pts;
-    if (known != AV_NOPTS_VALUE) {
-      d.anchor_ms = known;
-      d.since_anchor = 0;
+    if (!d.times.empty()) {
+      f.time_ms = d.times.top();
+      d.times.pop();
+    } else {
+      f.time_ms = d.anchor_ms + d.since_anchor * 1000 / d.fps;  // not expected: a time goes in with every frame
     }
-    f.time_ms = d.anchor_ms + d.since_anchor * 1000 / d.fps;
-    d.since_anchor++;
     f.yuv.resize(d.FrameBytes());
     uint8_t* dst = f.yuv.data();
     for (int plane = 0; plane < 3; ++plane) {
@@ -239,6 +242,11 @@ bool FeedOne(PPCContext& ctx, uint8_t* base, Decoder& d) {
   av_packet_unref(d.packet);
   d.packet->data = d.data.data();
   d.packet->size = static_cast<int>(n);
+  if (time_ms != AV_NOPTS_VALUE) {
+    d.anchor_ms = time_ms;
+    d.since_anchor = 0;
+  }
+  const int64_t frame_ms = d.anchor_ms + d.since_anchor++ * 1000 / d.fps;
   d.packet->pts = time_ms;
   d.packet->dts = AV_NOPTS_VALUE;
   if (const int err = avcodec_send_packet(d.av, d.packet); err < 0) {
@@ -248,6 +256,8 @@ bool FeedOne(PPCContext& ctx, uint8_t* base, Decoder& d) {
     if (logged.fetch_add(1) < 8)
       REXLOG_WARN("[movie] FFmpeg refused frame {} ({} bytes, time {}): {} ({}); first bytes {:02X}{:02X}{:02X}{:02X}",
                   d.frames_in, n, time_ms, text, err, d.data[0], d.data[1], d.data[2], d.data[3]);
+  } else {
+    d.times.push(frame_ms);  // only for a frame FFmpeg took: one it refused yields no picture
   }
   d.frames_in++;
   Collect(d);
@@ -340,7 +350,10 @@ REX_HOOK_RAW(sub_82D25330) {  // Decode
   while (d->ready.empty() && !d->eof) {
     if (!FeedOne(ctx, base, *d)) {
       d->eof = true;
-      avcodec_send_packet(d->av, nullptr);  // drain: the frames FFmpeg holds back for reordering
+      // Drain: the frames FFmpeg holds back for reordering. Not reached at the end of a movie with B frames: the
+      // player calls Decode once per compressed frame and then Close, with no end-of-stream call, message or flag
+      // (the callback's +8 output is 1 on every frame's last piece), so the last frame (33 ms) is never shown.
+      avcodec_send_packet(d->av, nullptr);
       Collect(*d);
     }
   }
@@ -402,6 +415,7 @@ REX_HOOK_RAW(sub_82D25228) {  // Reset
   }
   avcodec_flush_buffers(d->av);
   d->ready.clear();
+  d->times = {};
   d->eof = false;
   REXLOG_INFO("[movie] {:08X}: reset after {} frames in, {} out", table, d->frames_in, d->frames_out);
   ctx.r3.u64 = 0;

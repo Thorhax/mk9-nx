@@ -355,6 +355,22 @@ never registered; config.h is now tracked with that include (rebuild sdk/out/*/l
 Console: the Story intro (5:42) played in 341.9 s with 10258 frames, in sync (confirmed by the user).
 Cvars: mk9_movie_ffmpeg (default on), mk9_movie_trace (logs the interface).
 
+Frame times and the last frame (2026-10-26), traced on the Story intro (10258 frames, 5:42):
+- The data callback's times are in decode order, and FFmpeg hands each one on to the display-order frame, so with B
+  frames the output went 341133, 341100, 341200, 341166 ms (pairs backwards; the original decoder gives 100, 133, 166,
+  200 on the boot movies). Each decoded frame now takes the earliest time not yet given out: strictly increasing over
+  the whole intro.
+- The last frame (33 ms, at the fade) is still not shown. The player calls Decode once per compressed frame and then
+  Close: no extra call, no message to the codec's handler (only 0x80000 is ever sent), Decode's third argument is
+  always ~0, and the callback's +8 output is 1 on the last piece of every frame, not only the file's. FFmpeg's one
+  frame of reordering delay therefore has nothing to drain it.
+- The callback never blocks: 0x8050000B = the current packet is used up, 0x80500016 = no packet queued. Neither
+  means the end of the file, so reading ahead can't find the end either.
+- With mk9_movie_ffmpeg = false the game's own decoder plays the boot movies but hangs ~1.5 min into the Story intro
+  (a decoder thread waits in a critical section entered from XMV, sub_82CED3F0 <- sub_82D0DE40). Same on v12
+  (before codegen stage B) and with kernel_critsec_pcr_owner off; on 10-24 it played to the end. Not on the default
+  path; not bisected further.
+
 ## Vertex fetch pruning (2026-10-24)
 The first soak froze 3-8 s on first-time shader compiles; the worst were vertex variants of 400-830 KB of GLSL (~2.3 s
 each on the console). Renut's vertex shaders decode each stream with `switch (_N & 63u)` over every vertex format,

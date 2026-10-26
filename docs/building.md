@@ -155,12 +155,12 @@ assets/game_root --out out/renut_shader_dump`; docs/mk9-renut-census.md), then
 tools/linux/deko3d_chain.sh    # SPIR-V, GLSL, the GLSL passes, the package for the NRO, the DKSH cache (~1.5 min on 8 cores)
 ```
 
-**3. The NRO** (LTO, as released; a tree with `-DMK9_SWITCH_LTO=OFF` builds much faster for tests). The Mesa Horizon
+**3. The NRO** (`-v /:/host:ro`: the host's tools, DXC and uam, run inside the container through `tools/linux/hostrun.sh`; LTO, as released; a tree with `-DMK9_SWITCH_LTO=OFF` builds much faster for tests). The Mesa Horizon
 SDK (nfsmw-nx's Mesa 26.2.2, `libvulkan.a` repacked, docs/mk9-notes.md "Stage 5") is still needed for headers:
 
 ```sh
 python3 tools/switch/repack_archive.py <sdk>/lib/libvulkan.a <copy of the sdk>/lib/libvulkan.a --ar aarch64-none-elf-ar
-docker run --rm -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitpro/devkita64 bash -c "cmake -S app -B out/nx-dk-lto -G Ninja \
+docker run --rm -v /:/host:ro -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitpro/devkita64 bash -c "cmake -S app -B out/nx-dk-lto -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$R/tools/switch/cmake/switch-devkitA64.cmake \
   -DREXGLUE_SWITCH_NO_NVK=ON -DREXGLUE_SWITCH_NVK_SDK=<copy of the sdk> \
   -DSA2_GLSLANG_VALIDATOR=$R/out/glslang-dkp/StandAlone/glslangValidator -DDEVKITPRO=/opt/devkitpro -DMK9_SWITCH_LTO=ON \
@@ -173,6 +173,16 @@ lays them out), and your extracted disc as `sdmc:/switch/mk9-nx/game_root/` (wit
 file over 4 GB, so FAT32 cards work). Launch through a title takeover (hold R while starting a game) or a forwarder
 with full memory. The game adds what it compiles itself to both files; a cache made for another GLSL package is not
 used (its keys are the variants' text).
+
+**A release build** (one that can be distributed) carries no game shader: `python3 tools/renut_release_shaders.py`
+writes `app/out/renut_switch_release` (Renut's shader table without SPIR-V), and a tree configured with
+`-DSA2_RENUT_RELEASE_SHADERS=ON` (otherwise as above; `out/nx-release`) builds against it. The NRO then reads every
+game shader from `deko3d_glsl.bin` beside it, which the installer page
+([mk9-nx-installer](https://github.com/Thorhax/mk9-nx-installer)) makes from the player's own disc, and reads its
+frames from the SD card as it needs them. The page's shader recipe comes from
+`out/tools/ue3_shader_locate assets/game_root assets/game_root/Asset/*.xxx` (`shaders/tools/ue3_shader_locate.cpp`,
+built with `g++ -O2 -std=c++17 -Isdk/thirdparty/xxHash`) and `tools/installer_recipe_mk9.py`; the installer's README
+has the rest. Test the release NRO with the page's own package (its Node scripts make it) and nothing else beside it.
 
 **Updating the list** (developers): the console's `pipeline_list.bin` grows with every run. After new modes or stages
 have been played: `xz -9e -c pipeline_list.bin > shaders/deko3d_pipeline_list.xz`.

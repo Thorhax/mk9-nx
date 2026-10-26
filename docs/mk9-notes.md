@@ -517,3 +517,15 @@ others; 1,262 vperm sites) together with tools/leaf_locals.py (1,982 leaf functi
 locals). Hell, two alternating runs each against v15: 59.2 -> 59.0 fps, late frames 696 -> 752, game thread 13.6 ->
 13.8 ms: no gain in the noise, so both are left out. (Order matters for tools/float_loads.py: it must run before the
 store cards, whose _C store forms it does not see as stores of a float.)
+
+## The DKSH cache made at build time (2026-10-26)
+The repository now keeps the console's pipeline list as `shaders/deko3d_pipeline_list.xz` (5.1 MB -> 37 KB: shader
+hashes and render state, no game code or data; the user's call, as the PGO profile). `tools/linux/deko3d_chain.sh`
+ends by compiling every variant of it from the build's own GLSL (`deko3d_variant_cache.py` reads .xz lists): 22,787
+pipelines, 5,316 variants, 0 failed, 93 s on 8 cores, the same bytes on a rerun. `tools/linux/package_switch.sh` puts
+the cache and the list beside the NRO (the old package script still copied the Vulkan route's sa2_shaders.mesp).
+Why a list: the game has 19,010 shaders but the test runs used 1,366, and none of their 5,448 variants is a shader's
+default (output trim, alpha function, depth, vertex formats), so compiling from the shaders alone cannot find them.
+Console check (FRESHCACHE: v18, NONET, KN, 6.6 min ladder) with only the cache built from the list: uam 0 compiles,
+fps as V17_SOAK. What the list does not have yet: modes the rig never plays (Challenge Tower, Krypt, Tag, most
+fighters' moves); the game compiles those on first sight as before and adds them to the cache.

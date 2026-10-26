@@ -130,23 +130,49 @@ CMake, Ninja, `libx11-xcb-dev` and `libwayland-dev`. The SDK's shared libraries 
 `cmake -S sdk/thirdparty/glslang -B out/glslang -G Ninja -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF && ninja -C out/glslang glslangValidator`.
 DXC: Microsoft's Linux release unpacked into `out/tools/dxc`.
 
-## Switch (stage 5)
+## Switch
 
-Built on Linux in devkitPro's Docker image, with the repository mounted at the same path:
+Built on Linux in devkitPro's Docker image, with the repository mounted at the same path. The Switch NRO draws with
+deko3d (Renut's deko3d back end, no Vulkan driver): the game's shaders go into it as GLSL, and the console compiles
+the variants it needs with uam. To spare a first session those compiles, the build also makes the DKSH cache from the
+repository's pipeline list (`shaders/deko3d_pipeline_list.xz`: the shader hashes and render state of every pipeline
+the project's test runs used, no game code or data).
+
+**1. Host tools:** the PC build above (its `renut_xenos_recomp` target), `bash tools/deko3d_build_tools.sh`
+(SPIRV-Cross and uam in `out/deko3d_tools`) and glslangValidator for devkitPro:
 
 ```sh
-D=$PWD/..; R=$PWD
+D=$PWD; R=$PWD
 docker run --rm -v $D:$D -w $R devkitpro/devkita64 bash -c "cmake -S sdk/thirdparty/glslang -B out/glslang-dkp -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_HLSL=OFF && ninja -C out/glslang-dkp glslangValidator"
-# The Mesa Horizon SDK (nfsmw-nx's Mesa 26.2.2), with libvulkan.a repacked (docs/mk9-notes.md, "Stage 5"):
-python3 tools/switch/repack_archive.py <sdk>/lib/libvulkan.a <copy of the sdk>/lib/libvulkan.a --ar aarch64-none-elf-ar
-docker run --rm -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitpro/devkita64 bash -c "cmake -S app -B out/nx -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$R/tools/switch/cmake/switch-devkitA64.cmake \
-  -DREXGLUE_SWITCH_NVK_SDK=<copy of the sdk> -DSA2_GLSLANG_VALIDATOR=$R/out/glslang-dkp/StandAlone/glslangValidator \
-  -DDEVKITPRO=/opt/devkitpro [-DMK9_SWITCH_LTO=OFF] && cmake --build out/nx -j 8"
-tools/linux/package_switch.sh          # out/nx/mk9-nx-switch.zip
 ```
 
-On the SD card: `sdmc:/switch/mk9-nx/` with the NRO and the shader package, and your extracted disc as
-`sdmc:/switch/mk9-nx/game_root/` (without `$SystemUpdate`; ~7.3 GB, no file over 4 GB, so FAT32 cards work). Launch through a title takeover (hold R while starting a
-game) or a forwarder with full memory.
+**2. The shaders:** the game's shader containers in `out/renut_shader_dump` (the disc scan of "Making the shader
+package" plus Direct3D's own: `python3 tools/sa2_dump_shaders.py --image out/default_image.bin --assets
+assets/game_root --out out/renut_shader_dump`; docs/mk9-renut-census.md), then
+
+```sh
+tools/linux/deko3d_chain.sh    # SPIR-V, GLSL, the GLSL passes, the package for the NRO, the DKSH cache (~1.5 min on 8 cores)
+```
+
+**3. The NRO** (LTO, as released; a tree with `-DMK9_SWITCH_LTO=OFF` builds much faster for tests). The Mesa Horizon
+SDK (nfsmw-nx's Mesa 26.2.2, `libvulkan.a` repacked, docs/mk9-notes.md "Stage 5") is still needed for headers:
+
+```sh
+python3 tools/switch/repack_archive.py <sdk>/lib/libvulkan.a <copy of the sdk>/lib/libvulkan.a --ar aarch64-none-elf-ar
+docker run --rm -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitpro/devkita64 bash -c "cmake -S app -B out/nx-dk-lto -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$R/tools/switch/cmake/switch-devkitA64.cmake \
+  -DREXGLUE_SWITCH_NO_NVK=ON -DREXGLUE_SWITCH_NVK_SDK=<copy of the sdk> \
+  -DSA2_GLSLANG_VALIDATOR=$R/out/glslang-dkp/StandAlone/glslangValidator -DDEVKITPRO=/opt/devkitpro -DMK9_SWITCH_LTO=ON \
+  && cmake --build out/nx-dk-lto -j 6"
+tools/linux/package_switch.sh          # out/nx/sdcard/switch/mk9-nx and out/nx/mk9-nx-switch.zip
+```
+
+On the SD card: `sdmc:/switch/mk9-nx/` with `mk9.nro`, `deko3d_shaders.bin` and `pipeline_list.bin` (the package
+lays them out), and your extracted disc as `sdmc:/switch/mk9-nx/game_root/` (without `$SystemUpdate`; ~7.3 GB, no
+file over 4 GB, so FAT32 cards work). Launch through a title takeover (hold R while starting a game) or a forwarder
+with full memory. The game adds what it compiles itself to both files; a cache made for another GLSL package is not
+used (its keys are the variants' text).
+
+**Updating the list** (developers): the console's `pipeline_list.bin` grows with every run. After new modes or stages
+have been played: `xz -9e -c pipeline_list.bin > shaders/deko3d_pipeline_list.xz`.

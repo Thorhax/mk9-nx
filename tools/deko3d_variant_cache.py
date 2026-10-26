@@ -4,6 +4,9 @@
     python tools/deko3d_variant_cache.py [--list pipeline_list.bin] [--variants deko3d_variants.txt]
         [--glsl out/deko3d_shaders/glsl] [--out deko3d_shaders.bin] [--merge existing.bin] [--jobs 12]
 
+mk9-nx: the repository keeps a list (shaders/deko3d_pipeline_list.xz: shader hashes and render state only, no game code
+or data), so a build can make the whole cache from the player's own GLSL (docs/building.md, Switch).
+
 The variants come from Renut's pipeline lists (renut_pipeline_list, render/pipeline.cpp: every pipeline a draw needed,
 the key with its shaders' hashes) or from banjo_deko3d_variant_log ("vs <HASH> ps <HASH> id=value ...", one line a
 graphics pipeline). A list key's constants are what Build() gives it: 1000 + N for each bool of bool_mask (its value
@@ -19,6 +22,7 @@ NRO and adds what it compiles itself. Game data: the build tree and the SD card 
 import argparse
 import concurrent.futures
 import json
+import lzma
 import os
 import re
 import struct
@@ -287,7 +291,8 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
     """blend_skip_on: keep the keys' blend skip (constant 900); off (Renut's renderer since package 30,
     banjo_renut_blend_skip) the pipelines are built without it, whatever the list recorded. alpha_guess: the
     alpha functions (903 values) also made for a pipeline with a pixel shader whose record has none."""
-    data = open(path, 'rb').read()
+    # mk9-nx (2026-10-26): a list may be xz-compressed (shaders/deko3d_pipeline_list.xz, the one the repository keeps).
+    data = lzma.open(path).read() if path.endswith('.xz') else open(path, 'rb').read()
     magic, version, key_size, streams = struct.unpack_from('<4sIII', data, 0)
     if magic != b'RNPL' or LIST_KEY_SIZES.get(version) != key_size:
         sys.exit(f'deko3d_variant_cache: {path}: not a version 3 or 4 pipeline list ({magic}, {version}, {key_size})')

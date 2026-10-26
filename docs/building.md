@@ -164,6 +164,7 @@ docker run --rm -v /:/host:ro -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitp
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$R/tools/switch/cmake/switch-devkitA64.cmake \
   -DREXGLUE_SWITCH_NO_NVK=ON -DREXGLUE_SWITCH_NVK_SDK=<copy of the sdk> \
   -DSA2_GLSLANG_VALIDATOR=$R/out/glslang-dkp/StandAlone/glslangValidator -DDEVKITPRO=/opt/devkitpro -DMK9_SWITCH_LTO=ON \
+  -DBANJO_DEKO3D_SPIRV_CROSS=$R/out/deko3d_tools/bin/spirv-cross -DBANJO_DEKO3D_UAM=$R/out/deko3d_tools/bin/uam \
   && cmake --build out/nx-dk-lto -j 6"
 tools/linux/package_switch.sh          # out/nx/sdcard/switch/mk9-nx and out/nx/mk9-nx-switch.zip
 ```

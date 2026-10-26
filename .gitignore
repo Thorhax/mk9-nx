@@ -55,6 +55,9 @@
 /cache/
 /logs/
 
+# --- The test rig's local settings (console address, FTP login): rig/rig.env.example is the template ---
+/rig/rig.env
+
 # --- Tools and editors -------------------------------------------------------------
 __pycache__/
 *.pyc

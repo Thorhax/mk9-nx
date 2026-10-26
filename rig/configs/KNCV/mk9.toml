@@ -1,0 +1,5 @@
+sa2_msaa = 0
+sa2_vsync_relaxed = true
+input_xbox_layout = true
+input_joycon_sideways = true
+banjo_renut_store_cards_verify = true

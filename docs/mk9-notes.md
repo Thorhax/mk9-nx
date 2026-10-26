@@ -529,3 +529,17 @@ default (output trim, alpha function, depth, vertex formats), so compiling from 
 Console check (FRESHCACHE: v18, NONET, KN, 6.6 min ladder) with only the cache built from the list: uam 0 compiles,
 fps as V17_SOAK. What the list does not have yet: modes the rig never plays (Challenge Tower, Krypt, Tag, most
 fighters' moves); the game compiles those on first sight as before and adds them to the cache.
+
+## Rooftop (Dusk) floor and the Desert haze, traced (2026-10-26)
+Rooftop (Dusk) is Practice arena 16 (14 is Rooftop (Dawn), which now looks right). Most of the floor is pale
+lavender-white with a hard diagonal edge; a strip at the right is orange-lit (was "the left half by the portal").
+Bisected with mk9_diag_skip_ps over the 36 opaque pixel shaders of a frame (banjo_renut_diag_draw_log_s = 185 for the
+list): the floor is PS 8AE0E1AC77651A60 / VS 78C9B4ABAB2ADDE4, UE3 terrain drawn in 1600-unit patches, 8 textures
+(1024 DXT1 layers, a 2048x256 8888 texture, a 1024x1024 k_24_8 per-character shadow map at 400D0BE0 that the fighters
+alone are drawn into; mk9_diag_present_texture shows it right: the fighters on a cleared far value). Not the cause:
+the shadow pass (skipping E3DCDE0D76B54B5B leaves the floor as it was), banjo_deko3d_depth_compression, the blended
+draws, the fog shader. Whether the pale floor is wrong is not settled: the arena preview (a picture from the disc) is
+another view.
+Desert (arena 4): still covered by an opaque sand-coloured haze, the fighters too; skipping the fog volume PS
+A5A86E249D16F0B7 shows the stage right (dunes, arches, blue sky). VS 0ECBA41F038CB58A is not a plain cube: bool
+branches (dk_sel) add wind/offset terms from c20, c21, c25 before the view-projection.

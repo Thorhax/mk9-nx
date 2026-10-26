@@ -527,8 +527,10 @@ the cache and the list beside the NRO (the old package script still copied the V
 Why a list: the game has 19,010 shaders but the test runs used 1,366, and none of their 5,448 variants is a shader's
 default (output trim, alpha function, depth, vertex formats), so compiling from the shaders alone cannot find them.
 Console check (FRESHCACHE: v18, NONET, KN, 6.6 min ladder) with only the cache built from the list: uam 0 compiles,
-fps as V17_SOAK. What the list does not have yet: modes the rig never plays (Challenge Tower, Krypt, Tag, most
-fighters' moves); the game compiles those on first sight as before and adds them to the cache.
+fps as V17_SOAK. Widened the same day: ten more fighters (rig/tofight.sh PICK; Liu Kang, Sub-Zero, Ermac, Kitana, Mileena, Cyrax,
+Jax, Stryker, ...), a 4-minute Arcade Ladder each with the full cache: 0-4 compiles a run (18 in all), so the list
+already reached most of it; the list grew 22,787 -> 23,051 pipelines, 5,316 -> 5,368 variants (37 KB). Not in it yet:
+Challenge Tower, the Krypt, Tag Ladder; the game compiles those on first sight and adds them to the cache.
 
 ## Rooftop (Dusk) floor and the Desert haze, traced (2026-10-26)
 Rooftop (Dusk) is Practice arena 16 (14 is Rooftop (Dawn), which now looks right). Most of the floor is pale

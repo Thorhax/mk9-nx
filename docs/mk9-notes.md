@@ -587,3 +587,20 @@ empty.
   B / A Cancel, the exit dialog Yes B / No A. The user confirmed on the console: the intro with its sound, and every
   prompt right, the controller setup menu included (MK9 draws its button names there from the same atlases; no text
   fix as usf4-nx 0.8.1 needed).
+
+## The bone-matrix copy native; the input display's button atlas (2026-10-26)
+- `app/src/mk9_native_bones.cpp` (mk9_cpu_native_bones, verify mk9_native_bones_verify, rig config KNBV) replaces
+  sub_82972F60 (FNV 0xBC5EFFD3FDF0B3CA, 1736 bytes), the skinning copy on the game's rendering thread: the guest calls
+  as they were (pose released and referenced, its vtable[1]), then each section's bones as 12 words a bone (the 4x4
+  matrix's first three columns as three rows), the second set (bit 30 of the mesh's +396) at +1728. The function is
+  only reached through the function table, so the hook needed no regeneration. Verify (the original runs, the native
+  copies are compared): 0 differences in 131,072 calls on Hell and 131,072 in a ladder (v22), again on Hell (v24).
+- Native alone saved little: HELLPROF22 had the copy at 5.6 % of the thread (guest 6.2 %), almost all of it the first
+  load of each matrix (a cache miss: the pose's matrices are read in the index table's order) and the section's output
+  pointer. Prefetching the matrix four bones ahead and the next section's output (v23): 3.9 % (CopySet 3.2 + Sections
+  0.7), ~0.4 ms a frame on Hell. Hell A/B on fps was within noise (v21 58.3 / v22 58.7 over two runs each).
+- rig/proffn.py and rig/sym.py keep "(anonymous namespace)::" names (they cut every name at its first parenthesis).
+- Button icons: Practice's input display and the move list draw from a fourth atlas, 256x256 (32-pixel icons 36
+  apart: A B X Y / LT RT LB RB / RS LS START BACK / arrows / the moves' + , -), found with a second dump (up to 256);
+  mk9_button_icons draws it too (atlases now carry their size and grid). Console (v24): the input display shows the
+  Switch button.

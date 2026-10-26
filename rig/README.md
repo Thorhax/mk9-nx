@@ -52,6 +52,7 @@ A path to any folder holding a `mk9.toml` works too.
 | `KNCV` | KN plus the store-card check (every cached copy also hashed; misses logged) |
 | `KNC0` | KN with store cards off |
 | `KNCC` | KN plus the native constant copy checked against the guest code |
+| `KNBV` | KN plus the native bone-matrix copy checked against the guest code |
 
 ## Cautions
 

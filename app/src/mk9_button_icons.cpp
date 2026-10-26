@@ -16,8 +16,7 @@ REXCVAR_DEFINE_STRING(mk9_button_icons, "switch", "MK9",
 namespace mk9::button_icons {
 namespace {
 
-constexpr uint32_t kSize = 128;     // the atlases
-constexpr float kCell = 33.5f;      // their grid (three columns and rows used)
+constexpr uint32_t kMaxSize = 256;  // the largest atlas
 
 enum class Kind { Face, Shoulder, Trigger, Small };
 
@@ -29,15 +28,20 @@ struct Cell {
   const char *by_letter;
 };
 
-// FNV-1a 64 of each atlas's BC3 blocks, rows without padding (from the console's dumps, mk9_dump_textures_dir).
+// FNV-1a 64 of each atlas's BC3 blocks, rows without padding (from the console's dumps, mk9_dump_textures_dir); its
+// size; its grid (cells 'pitch' apart, the icon's centre 'centre' into its cell); whether row 2's cells are cleared a
+// few pixels further down (nothing is drawn under that row in the 128x128 atlases, and their keys reach past it).
 struct Atlas {
   uint64_t hash;
-  Cell cells[6];
+  uint32_t size;
+  float pitch, centre;
+  bool row2_past;
+  Cell cells[10];
   int count;
 };
 constexpr Atlas kAtlases[] = {
     // A, START, an arrow / LB, BACK, RS / LS, RT, RS
-    {0x639E358260AE66E6ull,
+    {0x639E358260AE66E6ull, 128, 33.5f, 16.0f, true,
      {{0, 0, Kind::Face, "B", "A"},
       {1, 0, Kind::Small, "+", "+"},
       {0, 1, Kind::Shoulder, "L", "L"},
@@ -45,11 +49,25 @@ constexpr Atlas kAtlases[] = {
       {1, 2, Kind::Trigger, "ZR", "ZR"}},
      5},
     // arrows, Y, a helmet / arrows / an arrow, B, a warning sign
-    {0x3B79FB3538601B95ull, {{1, 0, Kind::Face, "X", "Y"}, {1, 2, Kind::Face, "A", "B"}}, 2},
+    {0x3B79FB3538601B95ull, 128, 33.5f, 16.0f, true, {{1, 0, Kind::Face, "X", "Y"}, {1, 2, Kind::Face, "A", "B"}}, 2},
     // RS, RB, LS / X, +, - / LT, a sword
-    {0x82D18F4A1FDFEB74ull,
+    {0x82D18F4A1FDFEB74ull, 128, 33.5f, 16.0f, true,
      {{1, 0, Kind::Shoulder, "R", "R"}, {0, 1, Kind::Face, "Y", "X"}, {0, 2, Kind::Trigger, "ZL", "ZL"}},
      3},
+    // the input display's and the move list's (256x256, 32-pixel icons 36 apart): A, B, X, Y / LT, RT, LB, RB / RS, LS,
+    // START, BACK / arrows / the moves' +, - (kept)
+    {0xE7062195386FF4A2ull, 256, 36.0f, 17.5f, false,
+     {{0, 0, Kind::Face, "B", "A"},
+      {1, 0, Kind::Face, "A", "B"},
+      {2, 0, Kind::Face, "Y", "X"},
+      {3, 0, Kind::Face, "X", "Y"},
+      {0, 1, Kind::Trigger, "ZL", "ZL"},
+      {1, 1, Kind::Trigger, "ZR", "ZR"},
+      {2, 1, Kind::Shoulder, "L", "L"},
+      {3, 1, Kind::Shoulder, "R", "R"},
+      {2, 2, Kind::Small, "+", "+"},
+      {3, 2, Kind::Small, "-", "-"}},
+     10},
 };
 
 uint64_t RowHash(const uint8_t *data, uint32_t rows, uint32_t row_bytes, uint32_t row_pitch) {
@@ -73,10 +91,11 @@ constexpr Glyph kLetters[] = {
 
 // The atlas as RGBA
 struct Canvas {
-  uint8_t px[kSize * kSize * 4] = {};
+  uint32_t size = 128;  // the atlas's, at most kMaxSize
+  uint8_t px[kMaxSize * kMaxSize * 4] = {};
   void Blend(int x, int y, const uint8_t rgba[4], float cover) {
-    if (x < 0 || y < 0 || x >= int(kSize) || y >= int(kSize) || cover <= 0) return;
-    uint8_t *p = px + (size_t(y) * kSize + size_t(x)) * 4;
+    if (x < 0 || y < 0 || x >= int(size) || y >= int(size) || cover <= 0) return;
+    uint8_t *p = px + (size_t(y) * size + size_t(x)) * 4;
     cover = std::min(cover, 1.0f) * rgba[3] / 255.0f;
     const float a = p[3] / 255.0f, out = cover + a * (1 - cover);
     for (int i = 0; i < 3; i++)
@@ -194,7 +213,7 @@ void DecodeBc3Block(const uint8_t in[16], Canvas &c, uint32_t bx, uint32_t by) {
     pal[3][k] = (e0[k] + 2 * e1[k]) / 3;
   }
   for (int i = 0; i < 16; ++i) {
-    uint8_t *p = c.px + (size_t(by * 4 + i / 4) * kSize + (bx * 4 + i % 4)) * 4;
+    uint8_t *p = c.px + (size_t(by * 4 + i / 4) * c.size + (bx * 4 + i % 4)) * 4;
     const int k = (cbits >> (2 * i)) & 3;
     for (int j = 0; j < 3; ++j) p[j] = uint8_t(pal[k][j]);
     p[3] = uint8_t(apal[(abits >> (3 * i)) & 7]);
@@ -203,7 +222,7 @@ void DecodeBc3Block(const uint8_t in[16], Canvas &c, uint32_t bx, uint32_t by) {
 
 void EncodeBc3Block(const Canvas &c, uint32_t bx, uint32_t by, uint8_t out[16]) {
   const uint8_t *px[16];
-  for (uint32_t i = 0; i < 16; ++i) px[i] = c.px + (size_t(by * 4 + i / 4) * kSize + (bx * 4 + i % 4)) * 4;
+  for (uint32_t i = 0; i < 16; ++i) px[i] = c.px + (size_t(by * 4 + i / 4) * c.size + (bx * 4 + i % 4)) * 4;
   // alpha: its extremes and the six steps between them
   uint8_t amax = 0, amin = 255;
   for (const uint8_t *p : px) amax = std::max(amax, p[3]), amin = std::min(amin, p[3]);
@@ -255,14 +274,18 @@ void EncodeBc3Block(const Canvas &c, uint32_t bx, uint32_t by, uint8_t out[16]) 
   std::memcpy(out + 12, &cbits, 4);
 }
 
+// The pixels of a cell (with row 2's extra pixels where the atlas allows them).
+Area CellArea(const Atlas &atlas, const Cell &cell) {
+  return {int(cell.col * atlas.pitch), int(cell.row * atlas.pitch), int((cell.col + 1) * atlas.pitch),
+          std::min(int(atlas.size), int((cell.row + 1) * atlas.pitch) + (atlas.row2_past && cell.row == 2 ? 4 : 0))};
+}
+
 // The cell drawn over: cleared, then the Switch button centred where the Xbox one was.
-void DrawCell(Canvas &c, const Cell &cell, bool by_position) {
-  // The bottom row's keys and balls reach a few pixels past the cell; nothing is drawn under that row.
-  const Area a{int(cell.col * kCell), int(cell.row * kCell), int((cell.col + 1) * kCell),
-               int((cell.row + 1) * kCell) + (cell.row == 2 ? 4 : 0)};
-  for (int y = a.y0; y < a.y1; ++y) std::memset(c.px + (size_t(y) * kSize + a.x0) * 4, 0, size_t(a.x1 - a.x0) * 4);
+void DrawCell(Canvas &c, const Atlas &atlas, const Cell &cell, bool by_position) {
+  const Area a = CellArea(atlas, cell);
+  for (int y = a.y0; y < a.y1; ++y) std::memset(c.px + (size_t(y) * c.size + a.x0) * 4, 0, size_t(a.x1 - a.x0) * 4);
   const char *text = by_position ? cell.by_position : cell.by_letter;
-  const float cx = cell.col * kCell + 16.0f, cy = cell.row * kCell + 16.0f;
+  const float cx = cell.col * atlas.pitch + atlas.centre, cy = cell.row * atlas.pitch + atlas.centre;
   switch (cell.kind) {
     case Kind::Face: Round(c, a, text, cx, cy, 14.5f, 15.0f); break;
     case Kind::Small: Round(c, a, text, cx, cy, 11.5f, 13.0f); break;
@@ -282,7 +305,9 @@ uint64_t Hash(const uint8_t *data, uint32_t width, uint32_t height, uint32_t row
   return RowHash(data, (height + 3) / 4, (width + 3) / 4 * 16, row_pitch);
 }
 
-bool Candidate(uint32_t width, uint32_t height) { return width == kSize && height == kSize && SwitchIconsOn(); }
+bool Candidate(uint32_t width, uint32_t height) {
+  return width == height && (width == 128 || width == 256) && SwitchIconsOn();
+}
 
 bool Paint(uint8_t *data, uint32_t width, uint32_t height, uint32_t row_pitch) {
   if (!Candidate(width, height)) return false;
@@ -295,22 +320,24 @@ bool Paint(uint8_t *data, uint32_t width, uint32_t height, uint32_t row_pitch) {
   // it keeps its letter. (input_xbox_layout is the Switch input driver's: read by name, by position where there is
   // none.)
   static const bool by_position = rex::cvar::GetFlagByName("input_xbox_layout") != "false";
+  if (atlas->size != width) return false;
   static Canvas c;  // the render thread's uploads only
-  constexpr uint32_t kBlocks = kSize / 4;
-  for (uint32_t by = 0; by < kBlocks; ++by)
-    for (uint32_t bx = 0; bx < kBlocks; ++bx) DecodeBc3Block(data + size_t(by) * row_pitch + bx * 16, c, bx, by);
-  bool touched[kBlocks][kBlocks] = {};
+  c.size = atlas->size;
+  const uint32_t blocks = atlas->size / 4;
+  for (uint32_t by = 0; by < blocks; ++by)
+    for (uint32_t bx = 0; bx < blocks; ++bx) DecodeBc3Block(data + size_t(by) * row_pitch + bx * 16, c, bx, by);
+  static bool touched[kMaxSize / 4][kMaxSize / 4];
+  std::memset(touched, 0, sizeof(touched));
   for (int i = 0; i < atlas->count; ++i) {
     const Cell &cell = atlas->cells[i];
-    DrawCell(c, cell, by_position);
-    for (uint32_t by = uint32_t(cell.row * kCell) / 4;
-         by <= std::min(kBlocks - 1, (uint32_t((cell.row + 1) * kCell) + (cell.row == 2 ? 4 : 0)) / 4); ++by)
-      for (uint32_t bx = uint32_t(cell.col * kCell) / 4;
-           bx <= std::min(kBlocks - 1, uint32_t((cell.col + 1) * kCell) / 4); ++bx)
+    DrawCell(c, *atlas, cell, by_position);
+    const Area a = CellArea(*atlas, cell);
+    for (uint32_t by = uint32_t(a.y0) / 4; by <= std::min(blocks - 1, uint32_t(a.y1 - 1) / 4); ++by)
+      for (uint32_t bx = uint32_t(a.x0) / 4; bx <= std::min(blocks - 1, uint32_t(a.x1 - 1) / 4); ++bx)
         touched[by][bx] = true;
   }
-  for (uint32_t by = 0; by < kBlocks; ++by)
-    for (uint32_t bx = 0; bx < kBlocks; ++bx)
+  for (uint32_t by = 0; by < blocks; ++by)
+    for (uint32_t bx = 0; bx < blocks; ++bx)
       if (touched[by][bx]) EncodeBc3Block(c, bx, by, data + size_t(by) * row_pitch + bx * 16);
   return true;
 }

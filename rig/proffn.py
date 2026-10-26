@@ -17,7 +17,7 @@ else:
     pickle.dump((A, N), open(cache, 'wb'))
 def fn(x):
     i = bisect.bisect_right(A, x) - 1
-    return re.sub(r'\(.*', '', N[i])[:70] if i >= 0 else '?'
+    return re.sub(r'\((?!anonymous namespace\)).*', '', N[i])[:70] if i >= 0 else '?'
 mn = float(sys.argv[3]) if len(sys.argv) > 3 else 250; top = int(sys.argv[4]) if len(sys.argv) > 4 else 25
 tot = collections.defaultdict(collections.Counter); tsamp = collections.Counter(); tcpu = collections.defaultdict(list)
 on = False; th = None; blocks = 0

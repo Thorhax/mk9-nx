@@ -69,6 +69,7 @@ set(MK9_SOURCES
     # CPU enhancement: the sound engine's mix-matrix routine (sub_82E1E148, float16 gain ramps) native.
     src/mk9_native_mix.cpp
     src/mk9_button_icons.cpp
+    src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
     src/me/mk9_api_stubs.cpp

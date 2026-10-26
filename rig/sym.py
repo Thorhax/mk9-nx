@@ -18,7 +18,7 @@ else:
 def s(m):
     x = int(m.group(1), 16); i = bisect.bisect_right(A, x) - 1
     n = N[i] if i >= 0 else '?'
-    n = re.sub(r'\(.*', '', n)[:60]
+    n = re.sub(r'\((?!anonymous namespace\)).*', '', n)[:60]
     return f'{n}+{x - A[i]:#x}'
 src = sys.stdin if sys.argv[2] == '-' else open(sys.argv[2])
 for l in src:

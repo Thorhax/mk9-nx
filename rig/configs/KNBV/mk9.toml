@@ -1,0 +1,5 @@
+sa2_msaa = 0
+sa2_vsync_relaxed = true
+input_xbox_layout = true
+input_joycon_sideways = true
+mk9_native_bones_verify = true

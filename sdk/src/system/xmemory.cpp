@@ -1606,6 +1606,19 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
          base_page_number -= page_scan_stride) {
       if (page_table_[base_page_number].state != 0) {
         // Base page not free, skip to next usable page.
+        // mk9-nx (2026-10-26): past the whole region it belongs to, to the highest base whose range ends below the
+        // region (where stepping a stride at a time ends up, the same address): a match load's physical allocations
+        // stepped through tens of thousands of used pages each (~200 ms of a 1.5 s load hitch on the console).
+        const PageEntry& used = page_table_[base_page_number];
+        if (used.region_page_count && used.base_address <= base_page_number &&
+            base_page_number < int64_t(used.base_address) + used.region_page_count) {
+          int64_t next = int64_t(used.base_address) - int64_t(page_count);
+          if (next < int64_t(low_page_number)) {
+            break;
+          }
+          next -= next % page_scan_stride;
+          base_page_number = next + page_scan_stride;  // cancel out loop logic
+        }
         continue;
       }
       // Check requested range to ensure free.
@@ -1644,6 +1657,17 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
          base_page_number += page_scan_stride) {
       if (page_table_[base_page_number].state != 0) {
         // Base page not free, skip to next usable page.
+        // mk9-nx (2026-10-26): past the whole region it belongs to (as top down above).
+        const PageEntry& used = page_table_[base_page_number];
+        if (used.region_page_count && used.base_address <= base_page_number &&
+            base_page_number < used.base_address + used.region_page_count) {
+          const uint64_t next = rex::round_up(uint64_t(used.base_address) + used.region_page_count,
+                                              uint64_t(page_scan_stride));
+          if (next > max_base_page_number) {
+            break;
+          }
+          base_page_number = uint32_t(next) - page_scan_stride;  // cancel out loop logic
+        }
         continue;
       }
       // Check requested range to ensure free.

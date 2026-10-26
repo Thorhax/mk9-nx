@@ -557,3 +557,17 @@ draws, the fog shader. **Not a bug:** the user checked the real game: Rooftop (D
 Desert (arena 4): the thick sand haze over the stage and the fighters is the sandstorm the game draws (checked against
 Xbox 360 footage on 2026-10-24, "Desert and Courtyard checked against real footage"); skipping its fog volume PS
 A5A86E249D16F0B7 shows the stage under it. Not a bug either.
+
+## Load hitches: the page scan of physical allocations (2026-10-26)
+A profiled ladder (LOADPROF, v18, KNP): in the load hitches the game's render thread spent 16.6% of its time in
+BaseHeap::AllocRange (MmAllocatePhysicalMemoryEx from sub_829AEB48), ~300 ms over three match loads, while the main
+thread waited for it (sub_82741630, the flush of rendering commands). The scan for a free range stepped one page (one
+alignment stride) at a time over the used pages of the 512 MB physical heap. It now jumps over the whole region a used
+page belongs to (the page entry's base_address / region_page_count), landing where the stride-by-stride scan would: the
+same address (the chosen range is still checked page by page). v19 on the console, Practice into Hell, v18 / v19
+alternating, two each: the worst load frame 877 / 880 -> 352 / 351 ms, the next two 312-318 -> 274-285 ms and
+286-287 -> 251-255 ms; all frames over 100 ms 1.72 / 1.62 -> 1.14 / 1.11 s. AllocRange in the load hitches 16.6 ->
+2.5% of the render thread. What is left is mostly the main thread in UE3's own loading code (pointer chasing:
+sub_826CC300, sub_8270BA10, sub_8270C5E8) and the render command ring's allocator (sub_82360D20) waiting for space.
+The game's render thread sleeps (appSleep(0), Delay(0): 100 us for its below-normal priority) only when its ring is
+empty.

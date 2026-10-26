@@ -370,6 +370,16 @@ Frame times and the last frame (2026-10-26), traced on the Story intro (10258 fr
   (a decoder thread waits in a critical section entered from XMV, sub_82CED3F0 <- sub_82D0DE40). Same on v12
   (before codegen stage B) and with kernel_critsec_pcr_owner off; on 10-24 it played to the end. Not on the default
   path; not bisected further.
+Bisected later the same day (rig: Story intro, mk9_movie_ffmpeg = false, a build passes when 150 s of the movie play
+without a [hang]): mk9_movie (10-24), v6, v9, v11 pass (v11 three times out of three); v12 (store cards) and every
+later build hang 70-90 s in, with the same threads: a player worker in sub_82AF8C40 polling the streaming block cache
+(10 ms waits) while it holds the lock sub_82AF8EA8 takes, the decoder thread waiting for that lock from its call back
+into the player (sub_82CFB448), the game thread waiting for the player. Not the cause (current tree, each still
+hangs): kernel_critsec_spin 0, kernel_critsec_pcr_owner off, banjo_renut_store_cards off, mk9_cpu_native_mix off, the
+cards compiled out (REX_STORE_CARDS_OFF), the cards compiled out with the old 64 KB zero page and no card table. The
+card store macros only wrap the plain ones. Left: a build of v12's own generated tree (out/gen_v12_backup) with
+`tools/store_cards.py --restore` against commit 8dc5340, to tell the cards from the post-codegen re-run v12 was the
+first to get. FFmpeg (the default) is not affected.
 
 ## Vertex fetch pruning (2026-10-24)
 The first soak froze 3-8 s on first-time shader compiles; the worst were vertex variants of 400-830 KB of GLSL (~2.3 s

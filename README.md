@@ -29,8 +29,8 @@ Every finding and measurement: [docs/mk9-notes.md](docs/mk9-notes.md).
 2. Choose your game's disc image (a plain `.iso` of the Xbox 360 disc, not a compressed CCI/GOD/ZAR image) or a folder
    you extracted the disc into, then press **Create mk9-nx.zip**. Everything runs in your browser and your game files
    never leave your computer: the page checks your copy, downloads the Switch build from this repository's releases,
-   and makes the shaders and the game folder from your files. Making the shaders takes a few minutes on a fast PC
-   (19,010 of them, on all its cores); keep the tab open.
+   and makes the shaders and the game folder from your files. Making the shaders (19,010 of them, on all the
+   computer's cores) takes about 10 minutes on a PC with 8 cores; keep the tab open.
 3. Extract the downloaded `mk9-nx.zip` (about 7 GB) into `sdmc:/switch/`.
 
 Your `mk9-nx` folder then holds `mk9.nro`, `LICENSES.txt`, the renderer's shaders (`deko3d_glsl.bin`, made from your

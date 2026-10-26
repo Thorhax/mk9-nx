@@ -418,6 +418,20 @@ void PresentLocked(VideoState &s, const PresentImage *image) {
   PresentImage diag_image;
   if (image && DiagTextureImageLocked(diag_image))
     image = &diag_image;
+  if (!s.swap_chain) {
+    // mk9-nx (from usf4-nx): no swapchain while the Thorhax intro holds the output (Video::CreateHostDevice); made at
+    // the first present after it. Until then the frame ring moves without a present, as when minimized.
+#if defined(__SWITCH__)
+    if (!RexSwitchOutputHeld() && detail::CreateSwapChainLocked(s))
+      RGPU_INFO("Swapchain: made after the intro");
+#endif
+    if (!s.swap_chain) {
+      ServeCaptureLocked(s, image);
+      if (s.list_open)
+        detail::SubmitAndAdvance(s, nullptr, nullptr);
+      return;
+    }
+  }
   ApplyVsync(s);
   if (s.swap_chain->needsResize() || s.resize_requested.exchange(false, std::memory_order_acq_rel))
     RebuildSwapChain(s);

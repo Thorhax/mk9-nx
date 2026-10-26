@@ -129,6 +129,10 @@ std::unique_ptr<Surface> WindowSwitch::CreateSurfaceImpl(Surface::TypeFlags allo
   if (!nwindow_ || !(allowed_types & Surface::kTypeFlag_ViNWindow)) {
     return nullptr;
   }
+  // Someone else draws on the window for now (RexSwitchHoldOutput); the surface comes with RexSwitchReleaseOutput.
+  if (RexSwitchOutputHeld()) {
+    return nullptr;
+  }
   return std::make_unique<ViNWindowSurface>(nwindow_, *this);
 }
 

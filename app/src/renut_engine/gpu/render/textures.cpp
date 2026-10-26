@@ -2,6 +2,7 @@
  * @file    gpu/render/textures.cpp
  */
 #include "renut_engine/gpu/render/textures.h"
+#include "mk9_button_icons.h"  // mk9-nx: the Switch button icons (app/src)
 
 #include <algorithm>
 #include <bit>
@@ -12,6 +13,13 @@
 #include <vector>
 
 #include <xxhash.h>
+#include <fmt/format.h>
+
+#include <cstdio>
+#include <filesystem>
+#include <unordered_set>
+
+#include <rex/cvar.h>
 
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 
@@ -23,6 +31,14 @@
 #include "renut_engine/gpu/render/draw.h"
 #include "renut_engine/gpu/render/graphics_options.h"
 #include "renut_engine/gpu/backend/video.h"
+
+// mk9-nx (2026-10-26, from usf4-nx): finding the game's button icons (and any other texture) as uploaded.
+REXCVAR_DEFINE_STRING(mk9_dump_textures_dir, "", "MK9",
+                      "Diagnostic: each 2D texture's first level as uploaded (host format, untiled), once per content, "
+                      "into this folder: <hash>_<w>x<h>_f<guest format>_h<host format>_b<host block bytes>_p<row pitch>"
+                      "_d<decoded>.bin. Empty: off");
+REXCVAR_DEFINE_INT32(mk9_dump_textures_max_size, 0, "MK9",
+                     "mk9_dump_textures_dir: only textures at most this wide and high (0: any size)");
 
 namespace renut::gpu {
 
@@ -470,10 +486,36 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
       if (!staging)
         return false;
       auto *dst = static_cast<uint8_t *>(staging.cpu);
-      if (defer_read)
+      // mk9-nx (2026-10-26, from usf4-nx's usf4_dump_textures_dir): read now, so the level can be written out.
+      static const std::string dump_dir = REXCVAR_GET(mk9_dump_textures_dir);
+      static const uint32_t dump_max = uint32_t(std::max(0, REXCVAR_GET(mk9_dump_textures_max_size)));
+      const bool dump = !dump_dir.empty() && level == 0 && slice == 0 && !is_3d_data &&
+                        (!dump_max || (w <= dump_max && h <= dump_max));
+      // mk9-nx (2026-10-26, mk9_button_icons, from usf4-nx): a texture that may be one of the Xbox button atlases is
+      // read now and drawn over before the copy. plume's BC3_UNORM (61): the layout they come in.
+      const bool icon = level == 0 && !is_3d_data && u32(t.info.host) == 61 && mk9::button_icons::Candidate(w, h);
+      if (defer_read && !dump && !icon)
         g_pending_fills.push_back({t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch});
       else
         ReadLevel(t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch);
+      if (icon)
+        mk9::button_icons::Paint(dst, w, h, row_pitch);
+      if (dump) {
+        static std::unordered_set<uint64_t> dumped;
+        const uint64_t bytes = uint64_t(row_pitch) * blocks_h;
+        const uint64_t hash = banjo::renut_gpu::ContentHash64(dst, bytes, 0);
+        if (dumped.insert(hash).second) {
+          std::error_code ec;
+          std::filesystem::create_directories(dump_dir, ec);
+          const std::string name = fmt::format("{}/{:016X}_{}x{}_f{}_h{}_b{}_p{}_d{}.bin", dump_dir, hash, w, h,
+                                               u32(fetch.Format()), u32(t.info.host), t.info.host_block_bytes,
+                                               row_pitch, t.info.decoded_blocks ? 1 : 0);
+          if (FILE *f = std::fopen(name.c_str(), "wb")) {
+            std::fwrite(dst, 1, bytes, f);
+            std::fclose(f);
+          }
+        }
+      }
       // Footprints are in texels, block-aligned for compressed formats. Decoded
       // blocks are plain texels, so a level smaller than a block (a small mip)
       // takes only its own part of the decoded block.

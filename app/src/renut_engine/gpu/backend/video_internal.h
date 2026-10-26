@@ -9,10 +9,20 @@
 
 #include "renut_engine/gpu/backend/video.h"
 
+#if defined(__SWITCH__)
+// mk9-nx (from usf4-nx): whether the Thorhax intro still draws on the window (the SDK's output hold,
+// windowed_app_context_switch.h).
+extern "C" bool RexSwitchOutputHeld(void);
+#endif
+
 namespace renut::gpu::detail {
 
 // (Re)builds swapchain framebuffers and per-image present semaphores.
 bool BuildSwapChainTargets(VideoState &s);
+
+// mk9-nx (from usf4-nx): makes the swapchain on s.swap_window with its targets (CreateHostDevice, or PresentLocked after
+// the Thorhax intro).
+bool CreateSwapChainLocked(VideoState &s);
 
 // Frees everything retired into 'slot' and rewinds its upload ring. Only once
 // the slot's fence has been waited.

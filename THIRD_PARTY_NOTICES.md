@@ -15,6 +15,7 @@ license of the folder it is in (see below).
 | Horizon (Switch) layer of the SDK by StevensND | `sdk/src/**/*_switch.*`, `sdk/src/ui/switch_*.cpp`, `sdk/src/input/switch/`, `sdk/src/audio/switch/`, `sdk/cmake/rexglue_switch.cmake`, `sdk/switch_compat/`: guest memory, exception handling, threading, input, audio, presentation, clocks | BSD-3-Clause (as part of the SDK) |
 | Scripts and toolchain file by StevensND | `tools/find_gaps.py`, `tools/read_before_write.py`, `tools/direct_calls.py`, `tools/fetch_thirdparty.py`, `tools/switch/cmake/switch-devkitA64.cmake`, adapted for this game | GPL-3.0 |
 | [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) by hedge-dev and contributors, with the changes of nfsmw-nx, masseffect-nx and this port | `shaders/XenosRecomp`: Xenos microcode to HLSL translator | MIT (`shaders/LICENSE.md`) |
+| [pl_mpeg](https://github.com/phoboslab/pl_mpeg) by Dominic Szablewski (MPEG-1 decoder of the intro video), stored unmodified in `app/thorhax_intro/pl_mpeg.h` (commit `c871f2b`) | MIT |
 | [mesa-switch](https://github.com/danfromtico/mesa-switch) by danfromtico (with NaGaa95's updates), on top of [Mesa](https://mesa3d.org) | The Vulkan driver (NVK) and shader compiler (NAK) linked into the NRO: nfsmw-nx's build, which this port does not change (`mesa/README.md`) | MIT (Mesa's licenses per file) |
 
 The Horizon (Switch) layer added to `sdk/` is under the SDK's BSD-3-Clause license, and the changes in `shaders/`
@@ -90,6 +91,7 @@ license terms; SPIRV-Tools Apache-2.0; SPIRV-Headers MIT).
 
 ## Trademarks
 
-Sonic Adventure 2 and Sonic the Hedgehog are trademarks of SEGA; the icon (`app/icon.jpg`) is SEGA's artwork. Nintendo
-Switch is a trademark of Nintendo. Xbox 360 and Xbox Live Arcade are trademarks of Microsoft. This project is not
-affiliated with or endorsed by any of them.
+Mortal Kombat is a trademark of Warner Bros. Entertainment. The icon (`app/icon.jpg`), the intro video
+(`app/thorhax_intro`) and the Switch button icons drawn by `app/src/mk9_button_icons.cpp` are the project's own and
+contain no Warner Bros. artwork. Nintendo Switch is a trademark of Nintendo. Xbox 360 is a trademark of Microsoft. This
+project is not affiliated with or endorsed by any of them.

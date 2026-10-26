@@ -9,6 +9,7 @@
 #include <rex/ui/windowed_app_context_switch.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 
 #include <rex/cvar.h>
@@ -29,6 +30,10 @@ REXCVAR_DEFINE_BOOL(switch_video_recording, false, "Switch",
 namespace rex::ui {
 
 namespace {
+
+std::atomic<bool> g_output_held{false};
+// The one context, for RexSwitchReleaseOutput.
+std::atomic<SwitchWindowedAppContext*> g_context{nullptr};
 
 // Every source of work signals an event, so this only bounds how long a
 // missed signal could go unnoticed.
@@ -70,9 +75,11 @@ SwitchWindowedAppContext::SwitchWindowedAppContext() : impl_(std::make_unique<Im
   // Created here rather than in Initialize: other threads may post functions
   // as soon as the context exists.
   ueventCreate(&impl_->wakeup, true);
+  g_context.store(this);
 }
 
 SwitchWindowedAppContext::~SwitchWindowedAppContext() {
+  g_context.store(nullptr);
   // Execute leftover pending functions before the loop machinery goes away,
   // mirroring the shutdown contract documented in WindowedAppContext.
   ExecutePendingFunctionsFromUIThread();
@@ -136,6 +143,15 @@ void SwitchWindowedAppContext::UnregisterWindow(WindowSwitch* window) {
 
 bool SwitchWindowedAppContext::IsRegistered(const WindowSwitch* window) const {
   return std::find(windows_.begin(), windows_.end(), window) != windows_.end();
+}
+
+void SwitchWindowedAppContext::ReconnectWindowSurfaces() {
+  const std::vector<WindowSwitch*> windows = windows_;
+  for (WindowSwitch* window : windows) {
+    if (IsRegistered(window)) {
+      window->ReconnectSurface();
+    }
+  }
 }
 
 void SwitchWindowedAppContext::OnAppletHook(int hook_type) {
@@ -251,3 +267,22 @@ int SwitchWindowedAppContext::RunMainMessageLoop() {
 }
 
 }  // namespace rex::ui
+
+extern "C" void RexSwitchHoldOutput(void) {
+  rex::ui::g_output_held.store(true, std::memory_order_release);
+}
+
+extern "C" bool RexSwitchOutputHeld(void) {
+  return rex::ui::g_output_held.load(std::memory_order_acquire);
+}
+
+extern "C" void RexSwitchReleaseOutput(void) {
+  if (!rex::ui::g_output_held.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+  // Windows opened while held have no surface. One opened after this makes its own; a pending call runs once the UI
+  // loop does.
+  if (rex::ui::SwitchWindowedAppContext* context = rex::ui::g_context.load()) {
+    context->CallInUIThreadDeferred([context] { context->ReconnectWindowSurfaces(); });
+  }
+}

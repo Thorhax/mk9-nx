@@ -936,26 +936,20 @@ bool Video::CreateHostDevice() {
   // of queueing behind one already waiting for it; a frame that misses a refresh then waits a whole one.
   static const bool double_buffer = REXCVAR_GET(sa2_renut_double_buffer);
   const uint32_t images = double_buffer ? 2u : kFramesInFlight + 1;
-  plume::RenderSwapChainDesc swap_desc(render_window, kSwapChainFormat, images, false, kFramesInFlight);
   RGPU_INFO("Swapchain: {} images{}", images, double_buffer ? " (sa2_renut_double_buffer)" : "");
-  s.swap_chain = s.queue->createSwapChain(swap_desc);
-  // plume's Vulkan swapchain is created lazily by resize().
-  if (s.swap_chain && IsVulkan())
-    s.swap_chain->resize();
-  if (!s.swap_chain) {
-    RGPU_ERROR("Swapchain creation failed");
+  s.swap_window = render_window;
+  s.swap_images = images;
+#if defined(__SWITCH__)
+  // mk9-nx (2026-10-26, from usf4-nx): the Thorhax intro draws on the default window with a framebuffer of its own until
+  // it ends (RexSwitchHoldOutput): a swapchain on that window now fails (libdeko3d ends the process). The device, the
+  // queue and the render thread start now, so the game boots behind the intro; the swapchain comes at the first
+  // present after RexSwitchReleaseOutput (PresentLocked), and until then frames are submitted but not shown.
+  if (RexSwitchOutputHeld())
+    RGPU_INFO("Swapchain: after the intro (the output is held)");
+  else
+#endif
+  if (!detail::CreateSwapChainLocked(s))
     return false;
-  }
-  // banjo-nx: a window that starts minimized (window_start_minimized, the automated tests) has no
-  // surface extent yet: PresentLocked builds the swapchain's targets once it has one (needsResize),
-  // presenting nothing until then, as it does while minimized.
-  if (s.swap_chain->isEmpty() || !detail::BuildSwapChainTargets(s)) {
-    if (s.swap_chain->getWidth() && s.swap_chain->getHeight()) {
-      RGPU_ERROR("Swapchain creation failed");
-      return false;
-    }
-    RGPU_INFO("Swapchain: the window has no size yet (minimized); presenting starts when it has one");
-  }
 
   if (!BuildUtilityLayout(s) || !BuildSamplers(s) || !BuildNullTexture(s) ||
       !BuildPresentPipeline(s) || !BuildDepthResolvePipelines(s) || !BuildDrawLayout(s)) {
@@ -972,6 +966,34 @@ bool Video::CreateHostDevice() {
   s.host_ready = true;
   return true;
 }
+
+namespace detail {
+
+// The swapchain on s.swap_window (CreateHostDevice, or PresentLocked once the intro has ended: from usf4-nx).
+bool CreateSwapChainLocked(VideoState &s) {
+  plume::RenderSwapChainDesc swap_desc(s.swap_window, kSwapChainFormat, s.swap_images, false, kFramesInFlight);
+  s.swap_chain = s.queue->createSwapChain(swap_desc);
+  // plume's Vulkan swapchain is created lazily by resize().
+  if (s.swap_chain && IsVulkan())
+    s.swap_chain->resize();
+  if (!s.swap_chain) {
+    RGPU_ERROR("Swapchain creation failed");
+    return false;
+  }
+  // banjo-nx: a window that starts minimized (window_start_minimized, the automated tests) has no
+  // surface extent yet: PresentLocked builds the swapchain's targets once it has one (needsResize),
+  // presenting nothing until then, as it does while minimized.
+  if (s.swap_chain->isEmpty() || !BuildSwapChainTargets(s)) {
+    if (s.swap_chain->getWidth() && s.swap_chain->getHeight()) {
+      RGPU_ERROR("Swapchain creation failed");
+      return false;
+    }
+    RGPU_INFO("Swapchain: the window has no size yet (minimized); presenting starts when it has one");
+  }
+  return true;
+}
+
+}  // namespace detail
 
 bool Video::HostReady() {
   auto &s = State();

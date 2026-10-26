@@ -571,3 +571,17 @@ alternating, two each: the worst load frame 877 / 880 -> 352 / 351 ms, the next 
 sub_826CC300, sub_8270BA10, sub_8270C5E8) and the render command ring's allocator (sub_82360D20) waiting for space.
 The game's render thread sleeps (appSleep(0), Delay(0): 100 us for its below-normal priority) only when its ring is
 empty.
+
+## Thorhax intro and Switch button icons (2026-10-26)
+- **Intro** (from usf4-nx, `app/thorhax_intro`, unchanged): plays at startup while the game boots behind it. The SDK got
+  usf4-nx's output hold (RexSwitchHoldOutput / ReleaseOutput: no window surface, audio consumed without a device and
+  untouched controllers while held; usf4-nx 5da28db, applied as is), and Renut makes its swapchain at the first
+  present after the release (CreateSwapChainLocked; libdeko3d ends the process if a swapchain is made on the window
+  the intro draws on). Console: the intro shows, then the legal screen (the game booted behind it).
+- **Button icons** (`app/src/mk9_button_icons.cpp`, mk9_button_icons = "switch" | "xbox"): MK9's prompts come from
+  three 128x128 BC3 atlases (a grid of 33.5-pixel cells) that also hold the game's arrows, sticks and symbols, found
+  with the new texture dump (mk9_dump_textures_dir / _max_size, tools/texture_dump_png.py). At upload Renut decodes an
+  atlas known by its FNV-1a hash (rows without padding), draws the Switch buttons over the Xbox cells (by position:
+  A -> B, B -> A, X -> Y, Y -> X, LB/RB -> L/R, LT/RT -> ZL/ZR, START -> +, BACK -> -) and encodes the blocks it
+  touched again. LS/RS keep the game's art. Console: the main menu shows B Select / A Back, the difficulty menu Select
+  B / A Cancel, the exit dialog Yes B / No A.

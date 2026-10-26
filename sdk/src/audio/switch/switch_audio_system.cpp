@@ -23,6 +23,9 @@
 
 #include <switch.h>
 
+// The output hold (windowed_app_context_switch.cpp): a startup video has the device.
+extern "C" bool RexSwitchOutputHeld(void);
+
 // Passive counters: the audio thread neither writes reports nor pauses the game.
 extern "C" void RexSwitchPerfAdd(unsigned id, u64 value);
 extern "C" void RexSwitchPerfMax(unsigned id, u64 value);
@@ -221,51 +224,34 @@ bool SwitchAudioSystem::StartOutput() {
   output->frames_in_queue = static_cast<size_t>(std::clamp(REXCVAR_GET(audio_switch_frames_in_queue), 2, 32));
   REXLOG_INFO("SwitchAudioSystem: 187.5 Hz pump {}, {} frames queued", output->pump ? "active" : "off",
               output->frames_in_queue);
-
-  Result rc = audoutInitialize();
-  if (R_FAILED(rc)) {
-    REXLOG_ERROR("SwitchAudioSystem: audoutInitialize failed: 0x{:08X}", rc);
-    return false;
-  }
-  output->audout_initialized = true;
-  REXLOG_INFO("SwitchAudioSystem: audout {} Hz, {} channels, PCM format {}",
-              audoutGetSampleRate(), audoutGetChannelCount(), int(audoutGetPcmFormat()));
-  if (audoutGetSampleRate() != 48000 || audoutGetChannelCount() != 2 ||
-      audoutGetPcmFormat() != PcmFormat_Int16) {
-    REXLOG_ERROR("SwitchAudioSystem: unexpected audout format");
-    audoutExit();
-    return false;
-  }
+  output_ = std::move(output);
 
   for (size_t i = 0; i < kBufferCount; ++i) {
-    output->samples[i] = static_cast<s16*>(std::aligned_alloc(0x1000, kBufferAllocBytes));
-    if (!output->samples[i]) {
+    output_->samples[i] = static_cast<s16*>(std::aligned_alloc(0x1000, kBufferAllocBytes));
+    if (!output_->samples[i]) {
       REXLOG_ERROR("SwitchAudioSystem: out of memory for audio buffers");
-      output_ = std::move(output);
       StopOutput();
       return false;
     }
-    std::memset(output->samples[i], 0, kBufferAllocBytes);
-    AudioOutBuffer& buffer = output->buffers[i];
+    std::memset(output_->samples[i], 0, kBufferAllocBytes);
+    AudioOutBuffer& buffer = output_->buffers[i];
     buffer.next = nullptr;
-    buffer.buffer = output->samples[i];
+    buffer.buffer = output_->samples[i];
     buffer.buffer_size = kBufferAllocBytes;
     buffer.data_size = kBufferBytes;
     buffer.data_offset = 0;
   }
 
-  rc = audoutStartAudioOut();
-  if (R_FAILED(rc)) {
-    REXLOG_ERROR("SwitchAudioSystem: audoutStartAudioOut failed: 0x{:08X}", rc);
-    output_ = std::move(output);
+  // While the output is held the device is opened later, by the output thread.
+  if (RexSwitchOutputHeld()) {
+    REXLOG_INFO("SwitchAudioSystem: output held (startup video): the game is not heard until it ends");
+  } else if (!OpenDevice()) {
     StopOutput();
     return false;
   }
-  output->audout_started = true;
 
-  output_ = std::move(output);
   output_->running = true;
-  rc = threadCreate(
+  Result rc = threadCreate(
       &output_->thread,
       [](void* arg) { static_cast<SwitchAudioSystem*>(arg)->OutputThreadMain(); }, this, nullptr,
       kOutputThreadStack, kOutputThreadPriority, -2);
@@ -283,6 +269,30 @@ bool SwitchAudioSystem::StartOutput() {
     StopOutput();
     return false;
   }
+  return true;
+}
+
+bool SwitchAudioSystem::OpenDevice() {
+  Output& output = *output_;
+  Result rc = audoutInitialize();
+  if (R_FAILED(rc)) {
+    REXLOG_ERROR("SwitchAudioSystem: audoutInitialize failed: 0x{:08X}", rc);
+    return false;
+  }
+  output.audout_initialized = true;
+  REXLOG_INFO("SwitchAudioSystem: audout {} Hz, {} channels, PCM format {}",
+              audoutGetSampleRate(), audoutGetChannelCount(), int(audoutGetPcmFormat()));
+  if (audoutGetSampleRate() != 48000 || audoutGetChannelCount() != 2 ||
+      audoutGetPcmFormat() != PcmFormat_Int16) {
+    REXLOG_ERROR("SwitchAudioSystem: unexpected audout format");
+    return false;
+  }
+  rc = audoutStartAudioOut();
+  if (R_FAILED(rc)) {
+    REXLOG_ERROR("SwitchAudioSystem: audoutStartAudioOut failed: 0x{:08X}", rc);
+    return false;
+  }
+  output.audout_started = true;
   return true;
 }
 
@@ -307,7 +317,7 @@ void SwitchAudioSystem::StopOutput() {
   output_.reset();
 }
 
-void SwitchAudioSystem::FillAndAppend(size_t buffer_index) {
+void SwitchAudioSystem::FillAndAppend(size_t buffer_index, bool append) {
   Output& output = *output_;
   output.mix.fill(0.0f);
   // Snapshot once, so a change mid-buffer cannot split it across two mixes.
@@ -347,6 +357,9 @@ void SwitchAudioSystem::FillAndAppend(size_t buffer_index) {
       pcm_nonzero |= samples[i] != 0;
     }
   }
+  if (!append) {
+    return;
+  }
   RexSwitchPerfAdd(21, saturated);
   RexSwitchPerfAdd(22, pico >= 0.98f ? 1 : 0);
   RexSwitchPerfMax(23, static_cast<u64>(std::min(pico, 100.0f) * 10000.0f));
@@ -385,8 +398,46 @@ void SwitchAudioSystem::PumpTick() {
   }
 }
 
+// Without a device: the clients are served at the device's rate (the pump's ticks, and one buffer of frames consumed
+// every 21.3 ms), so the game runs as it would with sound. Until the output hold ends, or for good.
+void SwitchAudioSystem::RunSilent(bool until_released) {
+  Output& output = *output_;
+  const u64 pump_interval = armNsToTicks(kPumpIntervalNs);
+  const u64 buffer_interval = armNsToTicks(1'000'000'000ull * kBufferSamples / 48000);
+  u64 pump_deadline = armGetSystemTick() + pump_interval;
+  u64 buffer_deadline = armGetSystemTick() + buffer_interval;
+  while (output.running.load(std::memory_order_relaxed) && (!until_released || RexSwitchOutputHeld())) {
+    const u64 now = armGetSystemTick();
+    if (output.pump && now >= pump_deadline) {
+      PumpTick();
+      pump_deadline = std::max(pump_deadline + pump_interval, now);
+    }
+    if (now >= buffer_deadline) {
+      FillAndAppend(0, false);
+      buffer_deadline = std::max(buffer_deadline + buffer_interval, now);
+    }
+    const u64 wake = output.pump ? std::min(pump_deadline, buffer_deadline) : buffer_deadline;
+    const u64 after = armGetSystemTick();
+    if (wake > after) {
+      svcSleepThread(s64(armTicksToNs(wake - after)));
+    }
+  }
+}
+
 void SwitchAudioSystem::OutputThreadMain() {
   Output& output = *output_;
+  if (!output.audout_started) {
+    RunSilent(true);
+    if (!output.running.load(std::memory_order_relaxed)) {
+      return;
+    }
+    if (!OpenDevice()) {
+      REXLOG_ERROR("SwitchAudioSystem: no audio after the startup video");
+      RunSilent(false);
+      return;
+    }
+    REXLOG_INFO("SwitchAudioSystem: output released: audio on");
+  }
   for (size_t i = 0; i < kBufferCount; ++i) {
     FillAndAppend(i);
   }

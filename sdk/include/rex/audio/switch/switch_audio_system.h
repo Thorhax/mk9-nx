@@ -75,9 +75,12 @@ class SwitchAudioSystem final : public AudioSystem {
   struct Output;
 
   bool StartOutput();
+  bool OpenDevice();
   void StopOutput();
   void OutputThreadMain();
-  void FillAndAppend(size_t buffer_index);
+  void RunSilent(bool until_released);
+  // append = false: the clients' frames are mixed and consumed, and the result dropped (no device yet).
+  void FillAndAppend(size_t buffer_index, bool append = true);
   void PumpTick();
 
   std::unique_ptr<Output> output_;

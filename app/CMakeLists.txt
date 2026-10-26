@@ -68,6 +68,7 @@ set(MK9_SOURCES
     src/mk9_gpu_wait.cpp
     # CPU enhancement: the sound engine's mix-matrix routine (sub_82E1E148, float16 gain ramps) native.
     src/mk9_native_mix.cpp
+    src/mk9_button_icons.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
     src/me/mk9_api_stubs.cpp
@@ -95,6 +96,10 @@ if(WIN32)
 else()
     add_executable(mk9 ${MK9_SOURCES})
 endif()
+
+# The Thorhax intro video at startup (app/thorhax_intro, from usf4-nx; plays on the Switch only).
+include(thorhax_intro/thorhax_intro.cmake)
+thorhax_intro_add(mk9)
 
 # The codegen flavour (tools/codegen.sh --flavor) names the build in the first "[enh]" log line (sa2-nx).
 set(MK9_FLAVOR_FILE "${CMAKE_CURRENT_SOURCE_DIR}/generated/codegen_flavor.txt")

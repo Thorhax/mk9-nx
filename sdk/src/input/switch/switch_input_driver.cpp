@@ -549,6 +549,14 @@ static void RouteRecording(uint64_t& held, HidAnalogStickState& left, HidAnalogS
   }
 }
 
+// The output hold (windowed_app_context_switch.cpp): a startup video plays.
+extern "C" bool RexSwitchOutputHeld(void);
+
+namespace {
+// Per slot: the controller reads as untouched until all its buttons are up again.
+std::array<bool, 16> g_quiet_until_released{};
+}  // namespace
+
 void SwitchInputDriver::Poll(size_t index) {
   Slot& slot = *slots_[index];
   padUpdate(&slot.pad);
@@ -574,6 +582,19 @@ void SwitchInputDriver::Poll(size_t index) {
   uint64_t held = padGetButtons(&slot.pad);
   HidAnalogStickState left = padGetStickPos(&slot.pad, 0);
   HidAnalogStickState right = padGetStickPos(&slot.pad, 1);
+  // While a startup video plays, and afterwards until every button is up (so the press that skipped it does not reach
+  // the game), the game and the menu shortcuts see an untouched controller.
+  bool& quiet = g_quiet_until_released[index % g_quiet_until_released.size()];
+  if (RexSwitchOutputHeld()) {
+    quiet = true;
+  } else if (quiet && held == 0) {
+    quiet = false;
+  }
+  if (quiet) {
+    held = 0;
+    left = HidAnalogStickState{};
+    right = HidAnalogStickState{};
+  }
   // A single Joy-Con held sideways (input_joycon_sideways): its presses as a two-handed controller's, and its one
   // stick as the left stick (the right Joy-Con reports its stick as stick 1). The system already turned the stick.
   if (index != 0 && REXCVAR_GET(input_joycon_sideways)) {

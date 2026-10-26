@@ -140,6 +140,10 @@ struct VideoState {
   // Swapchain; present semaphores are per swapchain image (a binary semaphore
   // can only be re-signalled once its image has been re-acquired).
   std::unique_ptr<plume::RenderSwapChain> swap_chain;
+  // mk9-nx (from usf4-nx): what the swapchain is made from, when its making waits for the Thorhax intro (the Switch:
+  // the intro draws on the default window until RexSwitchReleaseOutput; CreateSwapChainLocked).
+  plume::RenderWindow swap_window{};
+  uint32_t swap_images = 0;
   std::vector<std::unique_ptr<plume::RenderFramebuffer>> swap_framebuffers;
   std::vector<std::unique_ptr<plume::RenderCommandSemaphore>> present_semaphores;
   std::atomic<bool> resize_requested{false};

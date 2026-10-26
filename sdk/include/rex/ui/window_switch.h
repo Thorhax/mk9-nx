@@ -35,6 +35,8 @@ class WindowSwitch final : public Window {
   void HandleFocusChange(bool has_focus);
   void HandlePendingPaint();
   void HandleCloseRequest();
+  // Makes the surface again (after RexSwitchReleaseOutput: none is made while the output is held).
+  void ReconnectSurface() { OnSurfaceChanged(true); }
 
  protected:
   bool OpenImpl() override;

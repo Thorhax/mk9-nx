@@ -529,8 +529,11 @@ default (output trim, alpha function, depth, vertex formats), so compiling from 
 Console check (FRESHCACHE: v18, NONET, KN, 6.6 min ladder) with only the cache built from the list: uam 0 compiles,
 fps as V17_SOAK. Widened the same day: ten more fighters (rig/tofight.sh PICK; Liu Kang, Sub-Zero, Ermac, Kitana, Mileena, Cyrax,
 Jax, Stryker, ...), a 4-minute Arcade Ladder each with the full cache: 0-4 compiles a run (18 in all), so the list
-already reached most of it; the list grew 22,787 -> 23,051 pipelines, 5,316 -> 5,368 variants (37 KB). Not in it yet:
-Challenge Tower, the Krypt, Tag Ladder; the game compiles those on first sight and adds them to the cache.
+already reached most of it; the list grew 22,787 -> 23,051 pipelines, 5,316 -> 5,368 variants (37 KB). Then three
+Tag Ladders (MODE=tag), the Challenge Tower (MODE=tower) and two Krypt walks (rig/krypt.sh: sticks only, since confirm
+buys items with the save's Koins): 23,848 pipelines, 5,752 variants. The Krypt runs at a steady 30 fps.
+Rig routes: after nxlink + 35 s, PLUS skips the last boot movie and the first confirm passes the title screen (the
+"lost first confirm" of the Arcade route); 1 PLAYER opens on FIGHT.
 
 ## Rooftop (Dusk) floor and the Desert haze, traced (2026-10-26)
 Rooftop (Dusk) is Practice arena 16 (14 is Rooftop (Dawn), which now looks right). Most of the floor is pale

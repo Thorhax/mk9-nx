@@ -584,4 +584,6 @@ empty.
   atlas known by its FNV-1a hash (rows without padding), draws the Switch buttons over the Xbox cells (by position:
   A -> B, B -> A, X -> Y, Y -> X, LB/RB -> L/R, LT/RT -> ZL/ZR, START -> +, BACK -> -) and encodes the blocks it
   touched again. LS/RS keep the game's art. Console: the main menu shows B Select / A Back, the difficulty menu Select
-  B / A Cancel, the exit dialog Yes B / No A.
+  B / A Cancel, the exit dialog Yes B / No A. The user confirmed on the console: the intro with its sound, and every
+  prompt right, the controller setup menu included (MK9 draws its button names there from the same atlases; no text
+  fix as usf4-nx 0.8.1 needed).

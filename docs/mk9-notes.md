@@ -539,6 +539,6 @@ list): the floor is PS 8AE0E1AC77651A60 / VS 78C9B4ABAB2ADDE4, UE3 terrain drawn
 alone are drawn into; mk9_diag_present_texture shows it right: the fighters on a cleared far value). Not the cause:
 the shadow pass (skipping E3DCDE0D76B54B5B leaves the floor as it was), banjo_deko3d_depth_compression, the blended
 draws, the fog shader. **Not a bug:** the user checked the real game: Rooftop (Dusk)'s floor is pale grey-white stone.
-Desert (arena 4): still covered by an opaque sand-coloured haze, the fighters too; skipping the fog volume PS
-A5A86E249D16F0B7 shows the stage right (dunes, arches, blue sky). VS 0ECBA41F038CB58A is not a plain cube: bool
-branches (dk_sel) add wind/offset terms from c20, c21, c25 before the view-projection.
+Desert (arena 4): the thick sand haze over the stage and the fighters is the sandstorm the game draws (checked against
+Xbox 360 footage on 2026-10-24, "Desert and Courtyard checked against real footage"); skipping its fog volume PS
+A5A86E249D16F0B7 shows the stage under it. Not a bug either.

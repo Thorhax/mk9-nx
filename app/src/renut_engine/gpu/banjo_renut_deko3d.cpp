@@ -69,7 +69,11 @@ static_assert(sizeof(PackageEntry) == 56, "tools/deko3d_shader_package.py's entr
 // game shader: SA2_RENUT_RELEASE_SHADERS).
 struct Package {
   bool ok = false;
-  std::vector<uint8_t> file;  // the file's bytes (the built-in package is used in place)
+  std::vector<uint8_t> file;  // the file's header, dictionary and table (the built-in package is used in place)
+  // mk9-nx (2026-10-27): beside the NRO the frames stay in the file and each shader's is read when it is made: the
+  // installer's package of MK9's 19,010 shaders is ~215 MB of raw zstd frames (the page has no compressor), more than
+  // the process can keep.
+  FILE *stream = nullptr;
   const uint8_t *base = nullptr;
   size_t size = 0;
   const PackageHeader *header = nullptr;
@@ -87,13 +91,16 @@ struct Packages {
 };
 Packages g_packages;
 
-bool Attach(Package &p, const uint8_t *base, size_t size, const char *what) {
+// base: the package's first `size` bytes, or with in_file only its first dataOffset (the frames are read from p.stream;
+// `size` is still the whole package's, for the checks).
+bool Attach(Package &p, const uint8_t *base, size_t size, const char *what, bool in_file = false) {
   if (size < sizeof(PackageHeader))
     return false;
   const auto *h = reinterpret_cast<const PackageHeader *>(base);
   const uint64_t table_end = uint64_t(h->tableOffset) + uint64_t(h->count) * sizeof(PackageEntry);
   if (std::memcmp(h->magic, "BDKG", 4) != 0 || h->version != 1 || sizeof(PackageHeader) + uint64_t(h->dictSize) > size ||
-      table_end > size || h->dataOffset > size) {
+      table_end > size || h->dataOffset > size ||
+      (in_file && (table_end > h->dataOffset || sizeof(PackageHeader) + uint64_t(h->dictSize) > h->dataOffset))) {
     REXLOG_ERROR("[deko3d] {}: not a GLSL package this build reads", what);
     return false;
   }
@@ -109,7 +116,7 @@ bool Attach(Package &p, const uint8_t *base, size_t size, const char *what) {
   p.size = size;
   p.header = h;
   p.entries = entries;
-  p.data = base + h->dataOffset;
+  p.data = in_file ? nullptr : base + h->dataOffset;
   p.dict = h->dictSize ? ZSTD_createDDict(base + sizeof(PackageHeader), h->dictSize) : nullptr;
   p.dctx = ZSTD_createDCtx();
   p.ok = p.dctx && (p.dict || !h->dictSize);
@@ -126,14 +133,22 @@ Packages &Open() {
       std::fseek(f, 0, SEEK_END);
       const long n = std::ftell(f);
       std::fseek(f, 0, SEEK_SET);
-      if (n > 0) {
-        p.file.resize(size_t(n));
+      // mk9-nx: only what comes before the frames (header, dictionary, table: dataOffset bytes) is read now.
+      PackageHeader h{};
+      if (n >= long(sizeof(h)) && std::fread(&h, sizeof(h), 1, f) == 1 && h.dataOffset >= sizeof(h) &&
+          long(h.dataOffset) <= n) {
+        p.file.resize(h.dataOffset);
+        std::fseek(f, 0, SEEK_SET);
         if (std::fread(p.file.data(), 1, p.file.size(), f) != p.file.size())
           p.file.clear();
       }
-      std::fclose(f);
-      if (Attach(p, p.file.data(), p.file.size(), path.c_str()))
-        REXLOG_INFO("[deko3d] GLSL package {}: {} shaders, {} KB", path, p.header->count, p.size >> 10);
+      if (!p.file.empty() && Attach(p, p.file.data(), size_t(n), path.c_str(), true)) {
+        p.stream = f;
+        REXLOG_INFO("[deko3d] GLSL package {}: {} shaders, {} KB ({} KB read; the shaders are read as they are made)",
+                    path, p.header->count, size_t(n) >> 10, p.file.size() >> 10);
+      } else {
+        std::fclose(f);
+      }
     }
     if (&g_deko3dGlslPackageSize != nullptr && g_deko3dGlslPackageSize >= sizeof(PackageHeader) &&
         Attach(all.source[1], g_deko3dGlslPackage, g_deko3dGlslPackageSize, "the NRO's GLSL package"))
@@ -276,9 +291,21 @@ std::unique_ptr<plume::RenderShader> CreateGameShader(plume::RenderDevice *devic
   std::memcpy(blob.data(), &header, sizeof(header));
   {
     std::lock_guard<std::mutex> lock(p.mutex);
-    const size_t n = p.dict ? ZSTD_decompress_usingDDict(p.dctx, blob.data() + sizeof(header), e->size,
-                                                         p.data + e->offset, e->compressedSize, p.dict)
-                            : ZSTD_decompressDCtx(p.dctx, blob.data() + sizeof(header), e->size, p.data + e->offset,
+    // mk9-nx: the package beside the NRO keeps its frames in the file (Open).
+    std::vector<uint8_t> frame;
+    const uint8_t *source = p.data ? p.data + e->offset : nullptr;
+    if (!source) {
+      frame.resize(e->compressedSize);
+      if (!p.stream || std::fseek(p.stream, long(p.header->dataOffset) + long(e->offset), SEEK_SET) != 0 ||
+          std::fread(frame.data(), 1, frame.size(), p.stream) != frame.size()) {
+        REXLOG_ERROR("[deko3d] shader {:016X}: could not be read from the GLSL package", hash);
+        return nullptr;
+      }
+      source = frame.data();
+    }
+    const size_t n = p.dict ? ZSTD_decompress_usingDDict(p.dctx, blob.data() + sizeof(header), e->size, source,
+                                                         e->compressedSize, p.dict)
+                            : ZSTD_decompressDCtx(p.dctx, blob.data() + sizeof(header), e->size, source,
                                                   e->compressedSize);
     if (ZSTD_isError(n) || n != e->size) {
       REXLOG_ERROR("[deko3d] shader {:016X}: the GLSL did not unpack ({})", hash,

@@ -9,7 +9,9 @@
 #   cmake --build out/pc
 
 cmake_minimum_required(VERSION 3.25)
-project(mk9 LANGUAGES CXX)
+project(mk9 VERSION 1.0.0 LANGUAGES CXX)
+# The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
+set(MK9_VERSION "${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -243,14 +245,17 @@ if(REXGLUE_PLATFORM_SWITCH)
 
     # The homebrew menu's entry (app/icon.jpg: an original 256x256 JPEG made for this port by tools/make_icon.py, no game artwork). A personal
     # app/icon_local.jpg (256x256 JPEG, git-ignored: it may be game artwork) replaces it when present.
-    set(MK9_NRO_ICON "${MK9_NRO_ICON}")
+    # (1.0.0 went out with no icon: this line read set(MK9_NRO_ICON "${MK9_NRO_ICON}"), empty unless given with -D.)
+    if(NOT MK9_NRO_ICON)
+        set(MK9_NRO_ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.jpg")
+    endif()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/icon_local.jpg")
         set(MK9_NRO_ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon_local.jpg")
     endif()
     rexglue_switch_add_nro(mk9
         NAME "Mortal Kombat Komplete Edition"
         AUTHOR "Thorhax"
-        VERSION "0.0.1"
+        VERSION "${MK9_VERSION}"
         ICON "${MK9_NRO_ICON}")
 endif()
 

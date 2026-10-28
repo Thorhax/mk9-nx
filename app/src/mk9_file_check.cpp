@@ -170,6 +170,11 @@ void CheckSizes(const std::string& root, const std::vector<GameFile>& files, std
   std::map<std::string, bool> opened;
   size_t checked = 0;
   for (const GameFile& f : files) {
+    // default.xex is left out: the installer also takes one another tool rebuilt (decrypted or decompressed: the same
+    // image, another size), and the recompiled game does not run its code.
+    if (Lower(f.path) == "default.xex") {
+      continue;
+    }
     const size_t slash = f.path.rfind('/');
     const std::string folder = slash == std::string::npos ? std::string() : f.path.substr(0, slash);
     const std::string name = Lower(slash == std::string::npos ? f.path : f.path.substr(slash + 1));
@@ -271,7 +276,9 @@ void CheckHashesAfterCrash(const std::string& root, const std::vector<GameFile>&
 
   std::map<std::string, const GameFile*> by_name;
   for (const GameFile& f : files) {
-    by_name[Lower(f.path)] = &f;
+    if (Lower(f.path) != "default.xex") {  // (as in CheckSizes)
+      by_name[Lower(f.path)] = &f;
+    }
   }
   const u64 started = armGetSystemTick();
   std::vector<uint8_t> buffer(1 << 20);

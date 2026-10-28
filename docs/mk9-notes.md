@@ -621,7 +621,9 @@ before the intro: the size of all 1,263 files (fsDirRead of the 6 folders, ~75 m
 system's error dialog names it and the game ends. Startup errors (`rex::ShowSimpleMessageBox`) are shown in that dialog
 too, the intro stopped first (`RexSwitchStopOutputHolder`; also in ExitProcess). Console: a missing Splash.bmp, a
 Splash.bmp with one byte changed (with the marker), an error during the intro (`mk9_file_check_test = 1`) and the
-marker from real opens (`= 2`) all as intended; OK returns to the HOME menu. `mk9_file_check = false` turns it off.
+marker from real opens (`= 2`) all as intended; OK returns to the HOME menu. `mk9_file_check = false` turns it off. `default.xex` is not checked: the installer also takes one another tool rebuilt (the same image, another
+size). The installer (1.0.1's page) checks the same files before it makes anything: sizes when the game is chosen, and
+each file's CRC-32 while it packs it (its `release/game-files-1.0.0.json`), naming a bad file instead of the console.
 
 **The triangles.** Console, Hell's first practice fight from an empty shader cache (`mk9_diag_bad_vertices`, 150
 screenshots a run):
@@ -632,6 +634,13 @@ screenshots a run):
 | fence-exact gate (1 run) | on | 1.0.1 | 10 | 0 |
 | warm cache | on | 1.0.0 | 1 | 0 |
 | async off (2 runs) | off | 1.0.0 / 1.0.1 | 0 / 5 | 0 |
+| 1.0.1 release NRO (5 runs) | off | 1.0.1 | Hell 4 / 1, two other stages 0 / 0, Arcade 0 | 0 |
+
+The release runs (2026-10-28, empty cache each): Hell twice, practice on two more stages (the arena list's 4th and
+6th), and Arcade Ladder's first fight (Desert, Freddy Krueger's fire intro). Screenshots scanned for magenta / white
+(the scan finds 1.0.0's glitch) and looked at. The bad vertices left are the same particle VS with no pixel shader,
+and their words are the same when read again two flushes later: what the game wrote, not a draw taken early. A warm
+cache has one too; none was seen on screen.
 
 - `mk9_async_pipelines` (on since 2026-10-25) left a draw out while its pipeline compiled in a worker. In this fight
   51 pipelines went that way, 67,332 draws left out, some keys never queued and waited for after 10 s on the render

@@ -38,8 +38,11 @@ disc) and the game files in `game_root/`. Start `mk9.nro` with a title takeover 
 game) or a forwarder with full memory; the album applet does not give the game enough memory. The game writes
 `mk9.toml` (your settings) at its first start.
 
-**The first time you play,** scenery can be missing for a moment at a stage's first intro while its shaders are
-compiled; they are kept on the SD card (`deko3d_shaders.bin`) for the next sessions.
+**The first time you play,** a stage's shaders are compiled while it loads, and an effect seen for the first time can
+pause the game for up to about a second; they are kept on the SD card (`deko3d_shaders.bin`) for the next sessions.
+
+**At every start** the game checks the size of its files (and, after a crash, the bytes of the files it was reading):
+a missing or damaged one is named in an error dialog. Make the disc image again if it says so.
 
 **Updating:** open the installer page again and press **Create mk9-nx-update.zip**: it only holds the new NRO and the
 shaders. Extract it over your folder; your settings, saves and game files stay.

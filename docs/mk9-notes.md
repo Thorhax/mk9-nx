@@ -628,8 +628,8 @@ screenshots a run):
 
 | Run | Async pipelines | Gate | Bad-vertex lines | Glitch screenshots |
 |---|---|---|---|---|
-| 1.0.0 behaviour (4 runs) | on | 1.0.0 | 17-26 | 2 of 4 runs (full-screen magenta / white with triangles, at "Fight") |
-| fence-exact gate (2 runs) | on | 1.0.1 | 10 | 0 |
+| 1.0.0 behaviour (6 runs) | on | 1.0.0 | 17-26 (the 3 runs with the diagnostic) | 2 of 6 runs (full-screen magenta / white with triangles, at "Fight") |
+| fence-exact gate (1 run) | on | 1.0.1 | 10 | 0 |
 | warm cache | on | 1.0.0 | 1 | 0 |
 | async off (2 runs) | off | 1.0.0 / 1.0.1 | 0 / 5 | 0 |
 

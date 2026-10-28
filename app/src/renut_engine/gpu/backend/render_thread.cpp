@@ -156,6 +156,61 @@ void OpenGateLocked() {
     ++g_gate_wait_opens;
   }
 }
+// mk9-nx (2026-10-28, mk9_gate_fence_exact): a fence poll or wait opens the gate only up to that fence's completion.
+// Opening it to everything queued (OpenGateLocked) let the render thread take the current frame's draws while the game
+// was still writing their particles: with the render thread behind (a shader compiling), the polled fence of an
+// earlier frame was pending, and the colourful triangles players saw while shaders compiled were those draws. The
+// Xbox 360's GPU runs ahead to the fence too, so what the game polls for is the work before it, written by then.
+REXCVAR_DEFINE_BOOL(mk9_gate_fence_exact, true, "MK9/Renderer",
+                    "mk9_record_after_swap: a fence poll or wait lets the render thread take the work up to that fence "
+                    "only (off: everything queued so far, as before 1.0.1)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+bool FenceExact() {
+  static const bool on = REXCVAR_GET(mk9_gate_fence_exact);
+  return on;
+}
+// The queued fence completions: the fence and the item count once it was queued. Requires g_mutex.
+struct QueuedFence {
+  u32 fence;
+  uint64_t items;
+};
+std::vector<QueuedFence> g_queued_fences;
+uint64_t g_gate_fence_opens = 0, g_gate_fence_misses = 0;
+// Requires g_mutex: the work up to 'fence' (through its completion) may run.
+void OpenGateToFenceLocked(u32 fence) {
+  if (!GateOn())
+    return;
+  if (!FenceExact()) {
+    OpenGateLocked();
+    return;
+  }
+  // The completions the render thread has taken are no longer needed.
+  g_queued_fences.erase(std::remove_if(g_queued_fences.begin(), g_queued_fences.end(),
+                                       [](const QueuedFence &q) { return q.items <= g_items_taken; }),
+                        g_queued_fences.end());
+  // Fences grow by two at each kick (32-bit, wrapping): the newest queued completion at or before 'fence'.
+  uint64_t to = 0;
+  bool found = false;
+  for (const QueuedFence &q : g_queued_fences) {
+    if (int32_t(q.fence - fence) <= 0) {
+      to = std::max(to, q.items);
+      found = true;
+    }
+  }
+  if (!found) {
+    // Its completion has run already (a fence never kicked is kicked before this): it waits for a guest callback,
+    // which a guest thread runs, not for the render thread. Releasing the work queued since would only let the render
+    // thread take the current frame's draws while the game still writes their vertices: what 1.0.0 did here, 37-49
+    // times in Hell's first fight from an empty shader cache with mk9_async_pipelines on (mk9_diag_bad_vertices: 17-26
+    // draws read wrong; 10 with this, the rest after the async path's long waits; none with it off).
+    ++g_gate_fence_misses;
+    return;
+  }
+  if (g_gate < to) {
+    g_gate = to;
+    ++g_gate_fence_opens;
+  }
+}
 uint64_t g_frames_queued = 0;
 uint64_t g_frames_done = 0;
 uint64_t g_fences_done = 0;  // fence completions written, plus callbacks reached
@@ -309,7 +364,7 @@ void WakeForWaitLocked() {
 }
 
 void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullptr,
-          const void *prefetch1 = nullptr, bool draw = false) {
+          const void *prefetch1 = nullptr, bool draw = false, const u32 *fence = nullptr) {
   Start();
   {
     std::unique_lock lock(g_mutex);
@@ -317,6 +372,8 @@ void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullp
     if (g_running && !g_stopping) {
       g_queue.push_back({std::move(work), locked, {prefetch0, prefetch1}});
       ++g_items_queued;
+      if (fence && GateOn())
+        g_queued_fences.push_back({*fence, g_items_queued});  // mk9-nx (mk9_gate_fence_exact)
       // sa2-nx (sa2_renut_wake_batch): a draw wakes a sleeping render thread once enough are queued.
       const bool wake = (g_render_waiting && (!draw || g_queue.size() >= WakeBatch())) ||
                         !banjo::renut_gpu::QueueNotifyIdleOn();
@@ -346,7 +403,7 @@ void QueuePrefetched(const void *prefetch0, const void *prefetch1, std::function
 }
 
 void QueueFenceCompletion(u32 completion_va, u32 fence, uint64_t after_callback) {
-  QueueUnlocked([completion_va, fence, after_callback] {
+  Push([completion_va, fence, after_callback] {
     bool wake;
     {
       std::lock_guard lock(g_mutex);
@@ -359,7 +416,7 @@ void QueueFenceCompletion(u32 completion_va, u32 fence, uint64_t after_callback)
     }
     if (wake)
       g_done_cv.notify_all();
-  });
+  }, false, nullptr, nullptr, false, &fence);
 }
 
 void QueueCallbackMarker(uint64_t seq) {
@@ -400,12 +457,19 @@ void CallbacksRun(uint64_t seq) {
     g_done_cv.notify_all();
 }
 
-bool WaitForFenceProgress(std::chrono::milliseconds timeout) {
+bool WaitForFenceProgress(std::chrono::milliseconds timeout, u32 fence) {
   std::unique_lock lock(g_mutex);
   if (!g_running || g_stopping)
     return false;
   const uint64_t seen = g_fences_done;
-  WakeForWaitLocked();  // sa2-nx (sa2_renut_wake_batch)
+  // mk9-nx (mk9_gate_fence_exact): the work up to the fence waited for; then the usual wake.
+  if (fence) {
+    OpenGateToFenceLocked(fence);
+    if (g_render_waiting && !g_queue.empty())
+      g_work_cv.notify_one();
+  } else {
+    WakeForWaitLocked();  // sa2-nx (sa2_renut_wake_batch)
+  }
   ++g_done_waiters;  // sa2-nx (sa2_renut_done_notify_waiters)
   const Clock::time_point since = Clock::now();
   g_done_cv.wait_for(lock, timeout,
@@ -508,13 +572,15 @@ uint64_t QueueFrame(std::function<void()> work) {
   });
   --g_done_waiters;
   const uint64_t done = g_frames_done;
-  const uint64_t watchdog_opens = g_gate_watchdog_opens, wait_opens = g_gate_wait_opens;
+  const uint64_t watchdog_opens = g_gate_watchdog_opens, wait_opens = g_gate_wait_opens,
+                 fence_opens = g_gate_fence_opens, fence_misses = g_gate_fence_misses;
   const auto waited = std::chrono::steady_clock::now() - waiting;
   g_swap_wait_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waited).count());
   if (done % 600 == 1) {
-    RGPU_INFO("[mk9] mk9_record_after_swap {}: gate opened {} times by a waiter or a Swap, {} by the 500 ms watchdog "
-              "({} frames); game threads waited {:.2f} ms a frame at the Swap, {:.2f} ms in {} fence waits",
-              GateOn(), wait_opens, watchdog_opens, done, double(g_swap_wait_us) / 600000.0,
+    RGPU_INFO("[mk9] mk9_record_after_swap {}: gate opened {} times by a waiter or a Swap, {} to a polled or waited "
+              "fence ({} already run: nothing to release), {} by the watchdog ({} frames); game threads waited {:.2f} "
+              "ms a frame at the Swap, {:.2f} ms in {} fence waits",
+              GateOn(), wait_opens, fence_opens, fence_misses, watchdog_opens, done, double(g_swap_wait_us) / 600000.0,
               double(g_fence_wait_us) / 600000.0, g_fence_waits);
     g_swap_wait_us = g_fence_wait_us = g_fence_waits = 0;
   }
@@ -541,14 +607,18 @@ uint64_t QueueFrame(std::function<void()> work) {
   return done;
 }
 
-void OpenGate() {
+void OpenGate(u32 fence) {
   bool wake;
   {
     std::lock_guard lock(g_mutex);
     if (!GateOn() || g_gate >= g_items_queued)
       return;
-    OpenGateLocked();
-    wake = g_render_waiting;
+    const uint64_t before = g_gate;
+    if (fence)
+      OpenGateToFenceLocked(fence);
+    else
+      OpenGateLocked();
+    wake = g_render_waiting && g_gate > before;
   }
   if (wake)
     g_work_cv.notify_one();

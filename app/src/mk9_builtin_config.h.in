@@ -3,7 +3,9 @@
 //                       (src/mk9_app.h, BuiltInConfig).
 //   kMk9PlayerConfig   app/mk9_switch.toml: the player's mk9.toml, written next to the NRO when there is none
 //                       (src/mk9_app.h, DefaultConfigFile).
+//   kMk9GameFiles      app/mk9_game_files.txt: size, SHA-256 and path of every game file (src/mk9_file_check.cpp).
 #pragma once
 
 inline constexpr char kMk9BuiltInConfig[] = R"MK9CONFIG(@MK9_BUILTIN_CONFIG@)MK9CONFIG";
 inline constexpr char kMk9PlayerConfig[] = R"MK9CONFIG(@MK9_PLAYER_CONFIG@)MK9CONFIG";
+inline constexpr char kMk9GameFiles[] = R"MK9FILES(@MK9_GAME_FILES@)MK9FILES";

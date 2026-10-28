@@ -32,10 +32,15 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_variant_log, false, "Banjo/Renut",
                     "Write deko3d_variants.txt next to the executable: each graphics pipeline's vertex and pixel shader "
                     "and specialization constants (tools/deko3d_variant_cache.py builds the deko3d DKSH cache from it)");
 // mk9-nx (2026-10-25): see GetPipelineSlow.
-REXCVAR_DEFINE_BOOL(mk9_async_pipelines, true, "MK9/Renderer",
+// Off by default since 1.0.1 (2026-10-28, console, Hell's first practice fight from an empty shader cache): on, the
+// workers' builds competed with the game (the fight's first 20 s at 26-35 fps, a 1.15 s frame), jobs never queued were
+// waited for after 10 s on the render thread, and mk9_diag_bad_vertices logged 17-26 draws of particle vertices read
+// wrong (players' coloured triangles while shaders compiled); off, the same fight played as with a full cache (47-49
+// fps, the compiles during the loading screen) and logged none.
+REXCVAR_DEFINE_BOOL(mk9_async_pipelines, false, "MK9/Renderer",
                     "deko3d: a new pipeline whose shaders need compiling (not in the DKSH cache) is built by a prebuild "
                     "worker; its draws are left out until it is done (a few frames) instead of the frame waiting for "
-                    "the compile (100-600 ms on the console)");
+                    "the compile (100-600 ms on the console). Off by default since 1.0.1");
 REXCVAR_DEFINE_INT32(mk9_async_compile_boost, 0x3A, "MK9/Renderer",
                      "deko3d, mk9_async_pipelines: the shader compile thread's priority while draws wait for a "
                      "worker's build (Horizon: higher is lower; the game's threads are 0x3B, the render thread 0x2C). "

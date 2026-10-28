@@ -49,6 +49,8 @@ namespace {
 // that path after closing the services, without returning to hbloader.
 [[noreturn]] void ExitProcess(int result) {
   REXLOG_INFO("Switch: exiting process ({})", result);
+  // The intro first, if it still plays: the services close below.
+  rex::ui::RexSwitchStopOutputHolder();
   rex::FlushLogging();
   std::fflush(nullptr);
   __nx_applet_exit_mode = 1;

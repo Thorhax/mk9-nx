@@ -17,6 +17,7 @@ add_library(rexcore OBJECT
     mutex.cpp
     ring_buffer.cpp
     string_buffer.cpp
+    system_hooks.cpp
     threading.cpp
     timer_queue.cpp
     utf8.cpp

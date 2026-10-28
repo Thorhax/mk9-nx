@@ -9,7 +9,7 @@
 #   cmake --build out/pc
 
 cmake_minimum_required(VERSION 3.25)
-project(mk9 VERSION 1.0.0 LANGUAGES CXX)
+project(mk9 VERSION 1.0.1 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 
@@ -39,6 +39,8 @@ set(MK9_SOURCES
     src/main.cpp
     # Linux: logs fatal host signals the SDK does not report (illegal instruction, ...) with the executable offset.
     src/mk9_crash_log.cpp
+    # Switch (1.0.1): the game files on the SD against the release's list (sizes each start, hashes after a crash).
+    src/mk9_file_check.cpp
     # Still snapshots of the game image for testing (cvar mk9_snapshot_s).
     src/mk9_snapshot.cpp
     # Scripted gamepad on player 1 for automated tests (cvars mk9_input_script, mk9_input_script_file).
@@ -236,8 +238,10 @@ if(REXGLUE_PLATFORM_SWITCH)
     # Fixed settings compiled in, and the player's mk9.toml written next to the NRO when missing.
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch_defaults.toml" MK9_BUILTIN_CONFIG)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch.toml" MK9_PLAYER_CONFIG)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mk9_game_files.txt" MK9_GAME_FILES)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                 "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch_defaults.toml" "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch.toml")
+                 "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch_defaults.toml" "${CMAKE_CURRENT_SOURCE_DIR}/mk9_switch.toml"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/mk9_game_files.txt")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/mk9_builtin_config.h.in"
                    "${CMAKE_CURRENT_BINARY_DIR}/builtin_config/mk9_builtin_config.h" @ONLY)
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/builtin_config")

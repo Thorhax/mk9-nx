@@ -31,6 +31,7 @@
 // The SDK's output hold (windowed_app_context_switch.h).
 extern "C" void RexSwitchHoldOutput(void);
 extern "C" void RexSwitchReleaseOutput(void);
+extern "C" void RexSwitchSetOutputHolderStop(void (*stop)(void));
 
 // The video and its sound, linked in (THORHAX_INTRO_DIR comes from thorhax_intro.cmake; this file is built without
 // LTO so the symbols defined here stay visible to the linker).
@@ -62,6 +63,9 @@ namespace {
 constexpr double kUnskippableSeconds = 3.0;
 // Held together, at any time.
 constexpr u64 kSecretSkip = HidNpadButton_Minus | HidNpadButton_Plus;
+
+// Stop(): the game wants the display back now (an error dialog or the process's exit, mk9-nx 1.0.1).
+std::atomic<bool> g_stop{false};
 constexpr u64 kSkipButtons = HidNpadButton_A | HidNpadButton_B | HidNpadButton_X | HidNpadButton_Y |
                              HidNpadButton_Plus | HidNpadButton_Minus | HidNpadButton_L | HidNpadButton_R |
                              HidNpadButton_ZL | HidNpadButton_ZR;
@@ -305,7 +309,7 @@ void PlayerMain(void*) {
   }
   // A full queue before the sound starts.
   while (decoder->written.load(std::memory_order_acquire) < kSlots &&
-         !decoder->ended.load(std::memory_order_acquire)) {
+         !decoder->ended.load(std::memory_order_acquire) && !g_stop.load(std::memory_order_acquire)) {
     svcSleepThread(2'000'000);
   }
 
@@ -325,6 +329,10 @@ void PlayerMain(void*) {
     padUpdate(&pad);
     const double now = clock();
     ended_at = now;
+    if (g_stop.load(std::memory_order_acquire)) {
+      ending = "stopped by the game";
+      break;
+    }
     if ((padGetButtons(&pad) & kSecretSkip) == kSecretSkip) {
       ending = "skipped with - and +";
       break;
@@ -380,6 +388,15 @@ void PlayerMain(void*) {
 }
 
 Thread g_player{};
+std::atomic<bool> g_started{false};
+
+// RexSwitchStopOutputHolder: ends the intro and waits until it has given the output back (from any other thread).
+void Stop() {
+  g_stop.store(true, std::memory_order_release);
+  if (g_started.load(std::memory_order_acquire) && threadGetCurHandle() != g_player.handle) {
+    threadWaitForExit(&g_player);
+  }
+}
 
 }  // namespace
 
@@ -389,6 +406,10 @@ void Start() {
   Result rc = threadCreate(&g_player, PlayerMain, nullptr, nullptr, 0x20000, kThreadPriority, kPlayerCore);
   if (R_SUCCEEDED(rc)) {
     rc = threadStart(&g_player);
+  }
+  if (R_SUCCEEDED(rc)) {
+    g_started.store(true, std::memory_order_release);
+    RexSwitchSetOutputHolderStop(&Stop);
   }
   if (R_FAILED(rc)) {
     REXLOG_WARN("intro: no player thread: 0x{:08X}", rc);

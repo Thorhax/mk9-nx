@@ -27,6 +27,11 @@ class WindowSwitch;
 extern "C" void RexSwitchHoldOutput(void);
 extern "C" void RexSwitchReleaseOutput(void);
 extern "C" bool RexSwitchOutputHeld(void);
+// mk9-nx 1.0.1: the holder's stop (it ends its use of the display and audio, releases the output and returns once
+// done). RexSwitchStopOutputHolder calls it while the output is held: before an error dialog or the process's exit,
+// which would otherwise end libnx's services under the holder (1.0.0: the intro's framebufferEnd aborted, 2345-0020).
+extern "C" void RexSwitchSetOutputHolderStop(void (*stop)(void));
+extern "C" void RexSwitchStopOutputHolder(void);
 
 class SwitchWindowedAppContext final : public WindowedAppContext {
  public:

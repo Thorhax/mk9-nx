@@ -23,6 +23,7 @@
 #include <rex/kernel/xboxkrnl/private.h>
 #include <rex/logging.h>
 #include <rex/memory.h>
+#include <rex/system.h>
 #include <rex/hook.h>
 #include <rex/types.h>
 #include <rex/system/info/file.h>
@@ -338,6 +339,7 @@ void MaybeSummaryIo(uint64_t now_us) {
 inline void NoteOpening(uint64_t us, bool ok, const std::string_view path) {
   if (ok) {
     g_io.opens_ok.fetch_add(1, std::memory_order_relaxed);
+    rex::NotifyFileOpened(path);  // mk9-nx 1.0.1: the files a crash's next start checks
   } else {
     g_io.opens_failure.fetch_add(1, std::memory_order_relaxed);
   }

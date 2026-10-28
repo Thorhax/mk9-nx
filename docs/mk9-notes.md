@@ -604,3 +604,44 @@ empty.
   apart: A B X Y / LT RT LB RB / RS LS START BACK / arrows / the moves' + , -), found with a second dump (up to 256);
   mk9_button_icons draws it too (atlases now carry their size and grid). Console (v24): the input display shows the
   Switch button.
+
+## 1.0.1: game files checked on the console; the triangles while shaders compile (2026-10-28)
+
+**Players' reports after 1.0.0.**
+- A tester's crash reports (2345-0020 / 2345-0021) were the intro's `framebufferEnd` aborting while the main thread
+  ended the process (startup had failed; the reason was only in the log). His log, a day later, showed Story mode's
+  first fight crashing in the game's LZO decompression of `Asset/BGND_CourtyardN.xxx`: his copy was 23,151,504 bytes
+  of 27,328,512, the rest identical (a bad disc image, he found; another one works).
+- Other players saw coloured triangles until the shaders were compiled (you reproduced it on a second console).
+
+**Game file check (`src/mk9_file_check.cpp`, `app/mk9_game_files.txt` from `tools/game_file_list.py`).** Every start,
+before the intro: the size of all 1,263 files (fsDirRead of the 6 folders, ~75 ms). After a crash in the game's code
+(the SDK's new guest crash hook, `rex::SetGuestCrashHook`), the files opened last go into
+`cache/file_check_after_crash.txt`, and the next start hashes them (16 at most; 110 MB in 2.0 s). A bad file: the
+system's error dialog names it and the game ends. Startup errors (`rex::ShowSimpleMessageBox`) are shown in that dialog
+too, the intro stopped first (`RexSwitchStopOutputHolder`; also in ExitProcess). Console: a missing Splash.bmp, a
+Splash.bmp with one byte changed (with the marker), an error during the intro (`mk9_file_check_test = 1`) and the
+marker from real opens (`= 2`) all as intended; OK returns to the HOME menu. `mk9_file_check = false` turns it off.
+
+**The triangles.** Console, Hell's first practice fight from an empty shader cache (`mk9_diag_bad_vertices`, 150
+screenshots a run):
+
+| Run | Async pipelines | Gate | Bad-vertex lines | Glitch screenshots |
+|---|---|---|---|---|
+| 1.0.0 behaviour (4 runs) | on | 1.0.0 | 17-26 | 2 of 4 runs (full-screen magenta / white with triangles, at "Fight") |
+| fence-exact gate (2 runs) | on | 1.0.1 | 10 | 0 |
+| warm cache | on | 1.0.0 | 1 | 0 |
+| async off (2 runs) | off | 1.0.0 / 1.0.1 | 0 / 5 | 0 |
+
+- `mk9_async_pipelines` (on since 2026-10-25) left a draw out while its pipeline compiled in a worker. In this fight
+  51 pipelines went that way, 67,332 draws left out, some keys never queued and waited for after 10 s on the render
+  thread, and the fight's first ~20 s ran at 26-35 fps with a 1.15 s frame. The bad vertices (particle quads, VS
+  171606728787F6D0, B416AA0E0CD813CA, 70AF95F71D6A13B0, 6AA573C9A7C81929: two 16-bit halves read as a float) came
+  after those waits. Off, the same fight played as with a full cache (47-49 fps; the compiles during the loading
+  screen). **Off by default since 1.0.1** (one 938 ms frame in the fight of that run: a compile at first use).
+- The gate (`mk9_record_after_swap`): `IsFencePending` on a pending fence released everything queued, the current
+  frame's half-written draws included. A fence whose completion has already run waits for a guest callback, so
+  releasing work does nothing for it. Since 1.0.1 (`mk9_gate_fence_exact`) a poll or wait releases the work up to that
+  fence's completion only, and nothing for one already run (1,729 such polls in that fight).
+- The console ran these tests at lower clocks than usual (Hell 48 fps warm, 1.0.0 the same); the user's clocks were
+  not touched.

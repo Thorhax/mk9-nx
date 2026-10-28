@@ -657,7 +657,7 @@ u32 BlockOnFence_hook(u32 device_va, u32 fence, u32 /*type*/, u32 /*no_kick*/) {
     RunReadyCallbacks();
     if (!FencePending(bytes, fence))
       break;
-    if (!render_thread::WaitForFenceProgress(std::chrono::milliseconds(2)))
+    if (!render_thread::WaitForFenceProgress(std::chrono::milliseconds(2), fence))
       break;  // no render thread: nothing would complete it
   }
   renut::frame_stats::OnGameThreadWait(
@@ -682,7 +682,7 @@ u32 IsFencePending_hook(u32 fence) {
     KickOff_hook(device_va);
   const bool pending = FencePending(bytes, fence);
   if (pending)
-    render_thread::OpenGate();  // mk9-nx (2026-10-24, mk9_record_after_swap): the game polls for that work
+    render_thread::OpenGate(fence);  // mk9-nx (mk9_record_after_swap, mk9_gate_fence_exact): the work up to it
   return pending ? 1 : 0;
 }
 

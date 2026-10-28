@@ -276,6 +276,23 @@ extern "C" bool RexSwitchOutputHeld(void) {
   return rex::ui::g_output_held.load(std::memory_order_acquire);
 }
 
+namespace {
+std::atomic<void (*)(void)> g_output_holder_stop{nullptr};
+}  // namespace
+
+extern "C" void RexSwitchSetOutputHolderStop(void (*stop)(void)) {
+  g_output_holder_stop.store(stop, std::memory_order_release);
+}
+
+extern "C" void RexSwitchStopOutputHolder(void) {
+  if (!RexSwitchOutputHeld()) {
+    return;
+  }
+  if (void (*stop)(void) = g_output_holder_stop.load(std::memory_order_acquire)) {
+    stop();
+  }
+}
+
 extern "C" void RexSwitchReleaseOutput(void) {
   if (!rex::ui::g_output_held.exchange(false, std::memory_order_acq_rel)) {
     return;

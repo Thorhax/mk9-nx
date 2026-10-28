@@ -20,6 +20,7 @@
 #include <fmt/format.h>
 
 #include <rex/assert.h>
+#include <rex/system.h>
 #include <rex/chrono/clock.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -696,6 +697,7 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
 #if REX_PLATFORM_SWITCH
     DumpGuestCrashContext(virtual_membase_);
 #endif
+    rex::NotifyGuestCrash();
     return false;
   }
 

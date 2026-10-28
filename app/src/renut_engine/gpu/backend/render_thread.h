@@ -55,7 +55,9 @@ void CallbacksRun(uint64_t seq);
 // Waits up to 'timeout' for the render thread to complete another fence or
 // reach another callback. Returns false when it is not running (nothing would
 // ever complete).
-bool WaitForFenceProgress(std::chrono::milliseconds timeout);
+// mk9-nx (mk9_gate_fence_exact): 'fence', the fence waited for (0: unknown), lets the render thread take the work up to
+// it only.
+bool WaitForFenceProgress(std::chrono::milliseconds timeout, u32 fence = 0);
 
 // A guest frame: 'work' (the Swap) is queued; then the game thread waits while
 // more than kMaxFramesAhead frames are queued but not yet done. Returns the
@@ -68,8 +70,8 @@ void InstallLateInput();
 std::string LateInputReport();
 uint64_t FramesDone();
 // mk9-nx (2026-10-24, mk9_record_after_swap): the render thread may take everything queued so far (a game thread
-// polls for its progress).
-void OpenGate();
+// polls for its progress); with 'fence' (mk9_gate_fence_exact, 1.0.1), only the work up to that fence's completion.
+void OpenGate(u32 fence = 0);
 
 // Waits until everything queued so far has run.
 void Drain();

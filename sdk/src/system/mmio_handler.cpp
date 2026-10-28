@@ -15,6 +15,7 @@
 #include <utility>
 
 #include <rex/assert.h>
+#include <rex/system.h>
 #include <rex/exception_handler.h>
 #include <rex/logging.h>
 #include <rex/memory.h>
@@ -447,6 +448,7 @@ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
       if (!handled) {
         REXLOG_ERROR("Unhandled guest access violation at host PC {:p}{}",
                      reinterpret_cast<const void*>(ex->pc()), DescribeHostCode(ex->pc()));
+        rex::NotifyGuestCrash();
       }
       return handled;
     }

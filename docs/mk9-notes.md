@@ -654,3 +654,19 @@ cache has one too; none was seen on screen.
   fence's completion only, and nothing for one already run (1,729 such polls in that fight).
 - The console ran these tests at lower clocks than usual (Hell 48 fps warm, 1.0.0 the same); the user's clocks were
   not touched.
+
+## The Krypt hang: the job helper that stopped popping (2026-10-29)
+
+Entering the Krypt froze the game (a white screen, no frame) in 6 of 13 entries, 1.0.1 too, warm shader cache or
+not. Both of the game's job workers (threads F80000E4 and F80000EC; worker structs pointing at the queue at
+[0x8341FC5C], 0x404AD2C0) were inside parent jobs running sub_82819C28 for their groups of child jobs, spinning at
+loc_82819CBC on the group's counter (+4; 9 and 6 left). The pending queue held 753 jobs, those groups' children
+among them (positions 376-390), and the idle list was empty: nobody to run them. The helper pops its children from
+the end of the group's array and, at the first pop that fails, only spins on the counter, never popping again; a
+pop that came before the children were queued left it there for good. (Found live: the memory search runs on its own
+thread, and the hang dump's x1/x2 in the spinning threads are the counter's address and value.)
+
+Fixed by a mid-asm hook at the loop's head (app/jobs.toml, src/mk9_jobs.cpp, cvar mk9_job_helper_retry): while the
+counter is not 0, sleep 50 us and pop again (the next job of the group, wrapping). Then 10 of 10 Krypt entries, the
+hook retrying 513+ times in that session (a group with 9 children left among them), no hang; practice on the lava
+arena 42.3 fps against 1.0.1's 42.3 (two runs each).

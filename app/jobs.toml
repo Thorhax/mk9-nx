@@ -1,0 +1,11 @@
+# mk9-nx: the job system's "help, then wait" loop (src/mk9_jobs.cpp). Included by mk9_manifest.toml.
+
+# 0x82819CBC (in sub_82819C28, the helper a parent job runs for its group of child jobs): after one failed pop the game
+# spins on the group's counter (+4) without popping again. The children can be queued after that pop; with both of
+# the game's workers inside such a loop nobody runs them, and the game hangs (the Krypt, 2026-10-29). true: the
+# counter is not 0, try the pop again (r29: another of the group's jobs) at loc_82819C70.
+[[midasm_hook]]
+address = 0x82819CBC
+name = "Mk9JobHelperRetry"
+registers = ["r29", "r30"]
+jump_address_on_true = 0x82819C70

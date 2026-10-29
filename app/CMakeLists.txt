@@ -9,7 +9,7 @@
 #   cmake --build out/pc
 
 cmake_minimum_required(VERSION 3.25)
-project(mk9 VERSION 1.0.1 LANGUAGES CXX)
+project(mk9 VERSION 1.0.2 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 
@@ -47,6 +47,8 @@ set(MK9_SOURCES
     src/mk9_script_input.cpp
     # Presented frames per second in the log (hook on the game's Direct3D swap, sub_82BF6D58).
     src/mk9_frame_counter.cpp
+    # The job system: a parent job waiting for its children keeps popping them (jobs.toml; the Krypt hang).
+    src/mk9_jobs.cpp
     src/mk9_movie.cpp
     # Switch: every thread's stack in logs/rex/rex_crash.log when no frame is presented for a while (mk9_hang_dump_s).
     src/mk9_hang_watch.cpp

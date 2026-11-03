@@ -670,3 +670,19 @@ Fixed by a mid-asm hook at the loop's head (app/jobs.toml, src/mk9_jobs.cpp, cva
 counter is not 0, sleep 50 us and pop again (the next job of the group, wrapping). Then 10 of 10 Krypt entries, the
 hook retrying 513+ times in that session (a group with 9 children left among them), no hang; practice on the lava
 arena 42.3 fps against 1.0.1's 42.3 (two runs each).
+
+## 1.0.3: the sign-in prompt from a second controller; the NRO named after its folder (2026-11-03)
+
+- **Sign-in prompt.** Players saw the game's "log in / continue without saving" box at "Press Start", its "Log in"
+  never returning. Only guest player 1 (user 0) is signed in (XamUserGetSigninState), and the guest players follow the
+  order the controllers connected in: a second controller pressing Start (a right Joy-Con held sideways is often the
+  Switch's player 2) is user 1, whom the game asks to sign in; XamShowSigninUI only broadcasts the notifications. New
+  in the Switch input driver (input_first_press_is_player1, default on): the first controller to press Start or A once
+  the startup video is over becomes player 1, trading its pad, vibration and per-press state with the one that was
+  (the guest-side device ids, players and states stay); logged as "input: npad N pressed first and is player 1 now".
+  The rig's single virtual controller already is player 1 (no swap logged, no prompt); the two-controller case is for
+  a console with two controllers.
+- **The homebrew icon.** hbmenu shows a folder as the app (with its icon) only when the NRO inside is named after the
+  folder; `mk9-nx/mk9.nro` showed as a plain folder, the game the last entry inside it. The installers now write
+  `mk9-nx/mk9-nx.nro` (the release asset stays `mk9.nro`); the shader cache keeps its plain name for both stems
+  (banjo_renut_deko3d.cpp), so an update keeps it. Console: `mk9-nx/mk9-nx.nro` boots and finds game_root.

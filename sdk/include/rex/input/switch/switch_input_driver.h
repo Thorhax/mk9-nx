@@ -64,6 +64,8 @@ class SwitchInputDriver final : public InputDriver {
   void Poll(size_t index);
   /* SDK menus on the gamepad: L+R+D-pad. See the .cpp. */
   void DispatchMenuShortcuts(Slot& slot, uint64_t held);
+  /* input_first_press_is_player1: the controller in slot 'index' becomes guest player 1. See the .cpp. */
+  bool TakePlayer1(size_t index);
   /* The system's controller applet (connect, reorder, split Joy-Cons), on the UI thread. */
   void ShowControllerApplet();
 
@@ -71,6 +73,7 @@ class SwitchInputDriver final : public InputDriver {
   std::array<std::unique_ptr<Slot>, kSlotCount> slots_;
   uint32_t connection_counter_ = 0;
   bool initialized_ = false;
+  bool player1_chosen_ = false;
   std::atomic<rex::ui::Window*> window_ui_{nullptr};
 };
 

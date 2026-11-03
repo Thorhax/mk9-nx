@@ -169,7 +169,8 @@ docker run --rm -v /:/host:ro -v $D:$D -w $R -e DEVKITPRO=/opt/devkitpro devkitp
 tools/linux/package_switch.sh          # out/nx/sdcard/switch/mk9-nx and out/nx/mk9-nx-switch.zip
 ```
 
-On the SD card: `sdmc:/switch/mk9-nx/` with `mk9.nro`, `deko3d_shaders.bin` and `pipeline_list.bin` (the package
+On the SD card: `sdmc:/switch/mk9-nx/` with `mk9-nx.nro` (the build's `mk9.nro`, named after its folder so the
+Homebrew Menu shows the folder as the game), `deko3d_shaders.bin` and `pipeline_list.bin` (the package
 lays them out), and your extracted disc as `sdmc:/switch/mk9-nx/game_root/` (without `$SystemUpdate`; ~7.3 GB, no
 file over 4 GB, so FAT32 cards work). Launch through a title takeover (hold R while starting a game) or a forwarder
 with full memory. The game adds what it compiles itself to both files; a cache made for another GLSL package is not

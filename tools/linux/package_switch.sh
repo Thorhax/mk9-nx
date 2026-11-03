@@ -16,7 +16,8 @@ cache="$root/out/deko3d_shaders/deko3d_shaders.bin"
 dest="$root/out/nx/sdcard/switch/mk9-nx"
 rm -rf "$root/out/nx/sdcard"
 mkdir -p "$dest"
-cp "$nro" "$cache" "$dest/"
+cp "$nro" "$dest/mk9-nx.nro"  # named after its folder: the Homebrew Menu shows the folder as the game
+cp "$cache" "$dest/"
 python3 -I -c "import lzma,sys; open(sys.argv[2],'wb').write(lzma.open(sys.argv[1]).read())" \
   "$root/shaders/deko3d_pipeline_list.xz" "$dest/pipeline_list.bin"
 cat > "$dest/README.txt" <<'TXT'

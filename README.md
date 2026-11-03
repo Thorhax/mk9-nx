@@ -33,10 +33,11 @@ Every finding and measurement: [docs/mk9-notes.md](docs/mk9-notes.md).
    computer's cores) takes about 10 minutes on a PC with 8 cores; keep the tab open.
 3. Extract the downloaded `mk9-nx.zip` (about 7 GB) into `sdmc:/switch/`.
 
-Your `mk9-nx` folder then holds `mk9.nro`, `LICENSES.txt`, the renderer's shaders (`deko3d_glsl.bin`, made from your
-disc) and the game files in `game_root/`. Start `mk9.nro` with a title takeover (hold **R** while launching an installed
-game) or a forwarder with full memory; the album applet does not give the game enough memory. The game writes
-`mk9.toml` (your settings) at its first start.
+Your `mk9-nx` folder then holds `mk9-nx.nro`, `LICENSES.txt`, the renderer's shaders (`deko3d_glsl.bin`, made from
+your disc) and the game files in `game_root/`. The Homebrew Menu shows the folder as the game, with its icon (an NRO
+named after its folder). Start it with a title takeover (hold **R** while launching an installed game) or a forwarder
+with full memory; the album applet does not give the game enough memory. The game writes `mk9.toml` (your settings) at
+its first start.
 
 **The first time you play,** a stage's shaders are compiled while it loads, and an effect seen for the first time can
 pause the game for up to about a second; they are kept on the SD card (`deko3d_shaders.bin`) for the next sessions.
@@ -58,7 +59,8 @@ again. The numbers are the Xbox 360's language IDs; the disc has text for these 
 a missing or damaged one is named in an error dialog. Make the disc image again if it says so.
 
 **Updating:** open the installer page again and press **Create mk9-nx-update.zip**: it only holds the new NRO and the
-shaders. Extract it over your folder; your settings, saves and game files stay.
+shaders. Extract it over your folder; your settings, saves and game files stay. Coming from 1.0.2 or earlier, delete the
+old `mk9.nro` in the folder (the game is `mk9-nx.nro` since 1.0.3) and remake a forwarder that pointed at it.
 
 ## Building
 

@@ -9,7 +9,7 @@
 #   cmake --build out/pc
 
 cmake_minimum_required(VERSION 3.25)
-project(mk9 VERSION 1.0.2 LANGUAGES CXX)
+project(mk9 VERSION 1.0.3 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 
@@ -127,7 +127,7 @@ target_link_libraries(mk9 PRIVATE libavcodec)
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].
 if(REXGLUE_PLATFORM_SWITCH AND TARGET rexcore)
-    target_compile_definitions(rexcore PRIVATE REX_SWITCH_FALLBACK_EXE="/switch/mk9-nx/mk9.nro")
+    target_compile_definitions(rexcore PRIVATE REX_SWITCH_FALLBACK_EXE="/switch/mk9-nx/mk9-nx.nro")
 endif()
 
 # SPIR-V initializers of the native renderer's EDRAM transfer / utility shaders (src/me/native/shaders), compiled

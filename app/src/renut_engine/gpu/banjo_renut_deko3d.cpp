@@ -204,8 +204,9 @@ void LoadCache() {
   const unsigned flags = Deko3DUamFlags();
   // mk9-nx (2026-10-21): an NRO not named mk9 keeps its own cache (<name>_deko3d_shaders.bin), so a test build whose
   // GLSL differs (mk9_noopt.nro) can sit in the same folder and share game_root without the two overwriting each other.
+  // The game itself is mk9-nx.nro since 1.0.3 (mk9.nro before): both use the plain name, so an update keeps its cache.
   const std::string stem = rex::filesystem::GetExecutablePath().stem().string();
-  const std::string prefix = (stem.empty() || stem == "mk9") ? std::string() : stem + "_";
+  const std::string prefix = (stem.empty() || stem == "mk9" || stem == "mk9-nx") ? std::string() : stem + "_";
   c.path = NextToExecutable(prefix + (flags == 1471u ? std::string("deko3d_shaders.bin")
                                                      : "deko3d_shaders_f" + std::to_string(flags) + ".bin"))
                .string();

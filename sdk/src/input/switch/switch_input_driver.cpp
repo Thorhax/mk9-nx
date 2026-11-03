@@ -35,6 +35,14 @@ REXCVAR_DEFINE_BOOL(input_xbox_layout, true, "Input",
                     "Face buttons by position, as on an Xbox 360 pad (the bottom button, B, acts as A). "
                     "false = by letter: the Switch's A acts as A");
 
+// mk9-nx (2026-11-03): only guest player 1 (user 0) is signed in, and the guest players follow the order the controllers
+// connected in. A second controller (a right Joy-Con held sideways is often the Switch's player 2) pressing Start at the
+// title screen got the game's sign-in prompt, whose "Log in" never returned. With this on, the first controller to
+// press Start or A once the startup video is over becomes player 1: it trades places with the one that was.
+REXCVAR_DEFINE_BOOL(input_first_press_is_player1, true, "Input",
+                    "The first controller to press Start or A after the startup video becomes player 1 (the signed-in "
+                    "profile that saves)");
+
 // Remapping, per player: which Switch buttons press each Xbox 360 button, read at start (sa2.toml sections
 // [input_p1] and [input_p2]: a = "B, ZR" there is input_p1_a). Empty = the default (the layout above for A/B/X/Y; for
 // the rest, the button in the same place). A comma-separated list of: A B X Y L R ZL ZR PLUS MINUS LSTICK RSTICK UP
@@ -645,12 +653,47 @@ void SwitchInputDriver::Poll(size_t index) {
     gamepad.thumb_ry = static_cast<int16_t>(0);
   }
 
+  // input_first_press_is_player1: this press goes to player 1 from the next poll on (the controller moved there).
+  if (!player1_chosen_ && !quiet && (buttons & (X_INPUT_GAMEPAD_START | X_INPUT_GAMEPAD_A)) && TakePlayer1(index)) {
+    return;
+  }
   if (std::memcmp(&gamepad, &slot.state.gamepad, sizeof(gamepad)) != 0) {
     slot.state.gamepad = gamepad;
     slot.state_changed = true;
   }
 }
 
+
+// The controller in slot 'index' takes player 1's place: the physical parts of the two slots (the pad, its vibration
+// devices and per-press state) are exchanged, and what the guest sees of each player (device id, player, state)
+// stays. Returns whether it moved. Either way player 1 is chosen for this run.
+bool SwitchInputDriver::TakePlayer1(size_t index) {
+  player1_chosen_ = true;
+  if (!REXCVAR_GET(input_first_press_is_player1) || slots_[index]->ordinal == 0) {
+    return false;
+  }
+  size_t first = kSlotCount;
+  for (size_t i = 0; i < kSlotCount; ++i) {
+    if (i != index && slots_[i]->connected && slots_[i]->ordinal == 0) {
+      first = i;
+    }
+  }
+  if (first == kSlotCount) {
+    return false;
+  }
+  Slot& a = *slots_[index];
+  Slot& b = *slots_[first];
+  std::swap(a, b);
+  std::swap(a.id, b.id);
+  std::swap(a.ordinal, b.ordinal);
+  std::swap(a.state, b.state);
+  std::swap(a.state_changed, b.state_changed);
+  std::swap(a.is_active, b.is_active);
+  std::swap(g_quiet_until_released[index % g_quiet_until_released.size()],
+            g_quiet_until_released[first % g_quiet_until_released.size()]);
+  REXLOG_INFO("input: npad {} pressed first and is player 1 now (was player {})", int(b.npad_id), a.ordinal + 1);
+  return true;
+}
 
 /* From the profiler (switch_perf.cpp): turns the GPU A/B test lap on and off. */
 extern "C" void RexSwitchPerfToggleAb(void);

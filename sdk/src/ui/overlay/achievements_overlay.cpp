@@ -71,6 +71,9 @@ void AchievementsOverlayDialog::OnDraw(ImGuiIO& io) {
     ImGui::PopStyleColor();
 
     ImGui::TextDisabled("Unlock progress is saved automatically");
+    if (close_request_) {
+      ImGui::TextDisabled("Press + to close");
+    }
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -141,6 +144,14 @@ void AchievementsOverlayDialog::OnDraw(ImGuiIO& io) {
   ImGui::End();
 
   ImGui::PopStyleVar(2);
+
+  // mk9-nx (2026-11-03): + (Start) or the back button closes the list, on release, so the game (which gets the
+  // controller back) does not see a new press of either.
+  if (close_request_ && !close_requested_ &&
+      (ImGui::IsKeyReleased(ImGuiKey_GamepadStart) || ImGui::IsKeyReleased(ImGuiKey_GamepadFaceRight))) {
+    close_requested_ = true;
+    close_request_();
+  }
 }
 
 }  // namespace rex::ui

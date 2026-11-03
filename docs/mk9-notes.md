@@ -686,3 +686,6 @@ arena 42.3 fps against 1.0.1's 42.3 (two runs each).
   folder; `mk9-nx/mk9.nro` showed as a plain folder, the game the last entry inside it. The installers now write
   `mk9-nx/mk9-nx.nro` (the release asset stays `mk9.nro`); the shader cache keeps its plain name for both stems
   (banjo_renut_deko3d.cpp), so an update keeps it. Console: `mk9-nx/mk9-nx.nro` boots and finds game_root.
+- **The achievements list** (L+R+Left) closed only with L+R+Left again, and while it had the menus' focus the game
+  got no buttons: players did not know how to leave it. Now + or the menus' back button closes it too, on release
+  (the game, which gets the controller back, sees no new press); the list says "Press + to close".

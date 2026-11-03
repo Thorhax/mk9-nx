@@ -480,6 +480,11 @@ void ReXApp::SetupOverlays(rex::ui::Presenter* presenter, rex::ui::ImmediateDraw
       achievements_overlay_.reset();
     } else {
       achievements_overlay_ = CreateAchievementsOverlay();
+      // mk9-nx (2026-11-03): + or the back button closes it too, after the frame that drew it.
+      if (auto* list = dynamic_cast<ui::AchievementsOverlayDialog*>(achievements_overlay_.get())) {
+        list->SetCloseRequest(
+            [this] { app_context().CallInUIThreadDeferred([this] { achievements_overlay_.reset(); }); });
+      }
     }
   });
 

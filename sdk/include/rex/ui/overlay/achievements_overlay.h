@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include <functional>
+
 #include <rex/system/achievement_manager.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/overlay/achievement_icon_cache.h>
@@ -29,6 +31,10 @@ class AchievementsOverlayDialog : public ImGuiDialog {
                             rex::Runtime* runtime, rex::system::AchievementManager* achievements);
   ~AchievementsOverlayDialog() override;
 
+  // mk9-nx (2026-11-03): called once when + or the menus' back button is released over the list (its owner closes
+  // it; on the Switch it was only L+R+Left again, which players did not know).
+  void SetCloseRequest(std::function<void()> close_request) { close_request_ = std::move(close_request); }
+
  protected:
   void OnDraw(ImGuiIO& io) override;
 
@@ -38,6 +44,8 @@ class AchievementsOverlayDialog : public ImGuiDialog {
 
   rex::system::AchievementManager* achievements_ = nullptr;
   AchievementIconCache icon_cache_;
+  std::function<void()> close_request_;
+  bool close_requested_ = false;
 };
 
 }  // namespace rex::ui

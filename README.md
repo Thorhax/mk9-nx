@@ -41,6 +41,19 @@ game) or a forwarder with full memory; the album applet does not give the game e
 **The first time you play,** a stage's shaders are compiled while it loads, and an effect seen for the first time can
 pause the game for up to about a second; they are kept on the SD card (`deko3d_shaders.bin`) for the next sessions.
 
+**Language:** the game is in English unless you choose another of its languages. Add a line to `mk9.toml` (in
+`sdmc:/switch/mk9-nx/`, written at the first start), for example `user_language = 5` for Spanish, and start the game
+again. The numbers are the Xbox 360's language IDs; the disc has text for these six:
+
+| `user_language` | Language |
+| --- | --- |
+| 1 | English (the default) |
+| 3 | German |
+| 4 | French |
+| 5 | Spanish |
+| 6 | Italian |
+| 9 | Portuguese |
+
 **At every start** the game checks the size of its files (and, after a crash, the bytes of the files it was reading):
 a missing or damaged one is named in an error dialog. Make the disc image again if it says so.
 

@@ -30,17 +30,20 @@ Every finding and measurement: [docs/mk9-notes.md](docs/mk9-notes.md).
    you extracted the disc into, then press **Create mk9-nx.zip**. Everything runs in your browser and your game files
    never leave your computer: the page checks your copy, downloads the Switch build from this repository's releases,
    and makes the shaders and the game folder from your files. Making the shaders (19,010 of them, on all the
-   computer's cores) takes about 10 minutes on a PC with 8 cores; keep the tab open.
+   computer's cores, then 5,841 of their variants compiled for the Switch) takes about 12 minutes on a PC with 8
+   cores; keep the tab open.
 3. Extract the downloaded `mk9-nx.zip` (about 7 GB) into `sdmc:/switch/`.
 
 Your `mk9-nx` folder then holds `mk9-nx.nro`, `LICENSES.txt`, the renderer's shaders (`deko3d_glsl.bin`, made from
-your disc) and the game files in `game_root/`. The Homebrew Menu shows the folder as the game, with its icon (an NRO
+your disc, and `deko3d_shaders.bin`, the same compiled for the Switch), the list of the pipelines the game builds at
+start (`pipeline_list.bin`) and the game files in `game_root/`. The Homebrew Menu shows the folder as the game, with its icon (an NRO
 named after its folder). Start it with a title takeover (hold **R** while launching an installed game) or a forwarder
 with full memory; the album applet does not give the game enough memory. The game writes `mk9.toml` (your settings) at
 its first start.
 
-**The first time you play,** a stage's shaders are compiled while it loads, and an effect seen for the first time can
-pause the game for up to about a second; they are kept on the SD card (`deko3d_shaders.bin`) for the next sessions.
+**Shaders:** since 1.0.4 the zip has the shaders already compiled for the Switch (every one the project has seen in
+its play tests), so the game does not stop to compile them while you play. A rare one it does not have is compiled the
+first time it is drawn (a short pause) and kept on the SD card for the next sessions.
 
 **Language:** the game is in English unless you choose another of its languages. Add a line to `mk9.toml` (in
 `sdmc:/switch/mk9-nx/`, written at the first start), for example `user_language = 5` for Spanish, and start the game
@@ -59,8 +62,9 @@ again. The numbers are the Xbox 360's language IDs; the disc has text for these 
 a missing or damaged one is named in an error dialog. Make the disc image again if it says so.
 
 **Updating:** open the installer page again and press **Create mk9-nx-update.zip**: it only holds the new NRO and the
-shaders. Extract it over your folder; your settings, saves and game files stay. Coming from 1.0.2 or earlier, delete the
-old `mk9.nro` in the folder (the game is `mk9-nx.nro` since 1.0.3) and remake a forwarder that pointed at it.
+shaders. Extract it over your folder; your settings, saves and game files stay. The game is `mk9-nx.nro` since 1.0.3;
+an older `mk9.nro` left in the folder (1.0.2 or earlier) is replaced by the new game when it starts (1.0.4 on), so a
+forwarder made for it keeps working.
 
 ## Building
 

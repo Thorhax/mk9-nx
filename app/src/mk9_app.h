@@ -22,6 +22,7 @@
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
+#include "mk9_old_nro.h"
 #include "thorhax_intro.h"  // app/thorhax_intro (from usf4-nx)
 
 // mk9-nx (2026-10-20): Renut's Direct3D-level renderer (src/renut_engine/gpu, from reNut by masterspike52 through
@@ -105,6 +106,9 @@ class Mk9App : public rex::ReXApp {
   // Stage 4: with sa2_renderer_native = true the graphics system is the native Vulkan renderer (src/me), and the
   // emulated Xenos GPU plugin is not loaded (ReXApp only loads it when config.graphics is empty).
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    // Switch (1.0.4): an older mk9.nro beside mk9-nx.nro made this game (or, started as that one, a newer mk9-nx.nro
+    // started instead).
+    mk9::old_nro::AtStart();
     // Switch (1.0.1): the game files against the release's list; a bad one is named on screen and the game ends here.
     mk9::file_check::AtStart(game_data_root());
     // The Thorhax intro video, while the game boots behind it (nothing has the window or the audio device yet).

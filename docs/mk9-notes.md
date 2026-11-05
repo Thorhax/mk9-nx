@@ -689,3 +689,36 @@ arena 42.3 fps against 1.0.1's 42.3 (two runs each).
 - **The achievements list** (L+R+Left) closed only with L+R+Left again, and while it had the menus' focus the game
   got no buttons: players did not know how to leave it. Now + or the menus' back button closes it too, on release
   (the game, which gets the controller back, sees no new press); the list says "Press + to close".
+
+## 1.0.4: the shaders compiled by the installer; the old mk9.nro (2026-11-05)
+
+- **Shader stutters.** Players of 1.0.3 reported pauses while playing: the installer's zip had only the GLSL
+  (deko3d_glsl.bin), so the console compiled every shader the first time it was drawn (uam, about 90 ms a variant on
+  the V1; a run on the test console with a 737-variant cache still compiled 36 at the title screen). The installer
+  now makes the DKSH cache the build tree makes (section "The DKSH cache made at build time"): every variant of
+  `shaders/deko3d_pipeline_list.xz` from the player's own GLSL, compiled by uam itself built for the browser
+  (mk9-nx-installer `wasm/uam.mjs`: `app/thirdparty/uam` with Emscripten 4.0.10, `PIPE_ARCH_LITTLE_ENDIAN` for Mesa's
+  p_config.h) and `lib/deko3d_cache.js` (tools/deko3d_variant_cache.py in JavaScript). Checked: 120 sampled shaders'
+  DKSH byte for byte the native uam's; the whole cache from the released package (44ca9d8…) is the Python tool's file
+  byte for byte (5,752 variants, 15,043,000 bytes, SHA-256 623253cd…; 106 s on 8 Node threads, 2 min natively on 12).
+  Both zips carry it and the list (`pipeline_list.bin`). The cache is the player's game turned into code, so it is
+  never published: only the page makes it.
+  Coverage on the console with 1.0.4's files (each run from a boot; mk9-logs/rig/C_*, C2_*): 25 Practice arenas, all
+  the roster's Arcade first fights, 2 Tag Ladders, Challenge Tower, the Krypt and Story's opening, no crash, 34 uam
+  compiles in all (one of 2.2 s). Their lists merged: 24,861 pipelines, 5,841 variants, 15,327,716 bytes, SHA-256
+  5c15fad3…, again the Python tool's file byte for byte. 2 of the 25 variants those runs cached are not ones the list
+  makes (compiled once on the console). Fatalities and X-Rays only as far as random fights reach them. Replaying 6 of those
+  runs on this cache: 5 compiles, a long tail of new combinations (the list grew 23 records, 8 variants; 2 of the
+  compiled ones again not made by the list). The 2.1 s one (a vertex shader, 85 KB of GLSL) runs on the uam thread:
+  the worst frame around it was 51.8 ms.
+- **The old mk9.nro.** 1.0.3 renamed the game to mk9-nx.nro and the update left the old mk9.nro in the folder:
+  forwarders made for it, and sphaira's list, kept starting the old game, so testers still saw the sign-in prompt
+  (and the test console's own run on 2026-11-05 was an older mk9.nro left on its card: 1.0.3 itself, Joy-Cons as player 2
+  pressing +, logged the swap and showed no prompt). mk9_old_nro.cpp (mk9_replace_old_nro, default on): started as
+  mk9-nx.nro, an mk9.nro beside it that differs (size, or the first, middle or last megabyte) is replaced by a copy
+  of the running game, on a libnx thread of its own (written as mk9.nro.new, then renamed; about 6 s, once); started as
+  mk9.nro with a newer mk9-nx.nro beside it (the NACP display versions), mk9.nro becomes a copy of it, a dialog asks
+  to start again and the process ends, so a forwarder never keeps a later update from running. Three things the console
+  showed on the way: std::thread::detach throws here (the game ended at start); threadCreate refuses priority 0x3E
+  (0xE001: created at 0x2C, lowered to 0x3B once running); envSetNextLoad cannot be used at this point (the loader
+  unloads the NRO while the game's threads run: an instruction abort outside any module).

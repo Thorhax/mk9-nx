@@ -167,6 +167,12 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
     return nullptr;
   }
 
+  static uint64_t block_retries = 0;  // mk9-nx 1.0.5: the kernel's memory blocks, waited for (RexGmCommit)
+  if (const uint64_t retries = RexGmBlockRetries(); retries != block_retries) {
+    block_retries = retries;
+    REXLOG_WARN("AllocFixed: waited for the kernel's memory blocks ({} waits of 100 ms so far)", retries);
+  }
+
   // The core always commits memory as accessible and keeps any existing protection;
   // the requested permission is applied on top. In the common case (read-write on
   // an unprotected range) this returns immediately.

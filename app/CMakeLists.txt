@@ -9,7 +9,7 @@
 #   cmake --build out/pc
 
 cmake_minimum_required(VERSION 3.25)
-project(mk9 VERSION 1.0.4 LANGUAGES CXX)
+project(mk9 VERSION 1.0.5 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 
@@ -42,6 +42,7 @@ set(MK9_SOURCES
     # Switch (1.0.1): the game files on the SD against the release's list (sizes each start, hashes after a crash).
     src/mk9_file_check.cpp
     src/mk9_old_nro.cpp
+    src/mk9_profile_load.cpp
     # Still snapshots of the game image for testing (cvar mk9_snapshot_s).
     src/mk9_snapshot.cpp
     # Scripted gamepad on player 1 for automated tests (cvars mk9_input_script, mk9_input_script_file).

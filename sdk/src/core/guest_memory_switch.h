@@ -189,6 +189,9 @@ int RexGmProtectionMode(void);
  */
 uint32_t RexGmLastResult(void);
 
+/* mk9-nx 1.0.5: waits of 100 ms so far for the kernel's memory blocks (RexGmCommit). */
+uint64_t RexGmBlockRetries(void);
+
 /*
  * mk9-nx (2026-10-24): the window's map/unmap calls, without the lock (a hang report runs while a stuck call holds
  * it): call count, failures, and the call in flight with its age. Writes a line to `out`, returns its length.

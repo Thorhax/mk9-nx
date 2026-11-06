@@ -38,6 +38,7 @@ std::atomic<uint64_t> g_svc_src{0};
 std::atomic<uint64_t> g_svc_len{0};
 std::atomic<uint32_t> g_svc_unmap{0};
 std::atomic<uint32_t> g_svc_fails{0};
+std::atomic<uint64_t> g_block_retries{0};  /* waits for the kernel's memory blocks (RexGmCommit) */
 std::atomic<uint32_t> g_svc_last_rc{0};
 
 Result TracedSvc(bool unmap, void* dst, Handle proc, u64 src, u64 len) {
@@ -612,6 +613,8 @@ bool RexGmAddView(uint8_t* base, size_t offset, size_t length) {
     return true;
 }
 
+uint64_t RexGmBlockRetries(void) { return g_block_retries.load(std::memory_order_relaxed); }
+
 bool RexGmCommit(size_t offset, size_t length, RexGmAccess access) {
     /*
      * Memory is always committed accessible. Restricting permissions is the job of
@@ -665,12 +668,25 @@ bool RexGmCommit(size_t offset, size_t length, RexGmAccess access) {
         }
         memset(backing, 0, sz);
 
-        virtmemLock();
-        void* shadow = virtmemFindCodeMemory(sz, align);
-        Result rc = shadow ? svcMapProcessCodeMemory(Proc(), reinterpret_cast<u64>(shadow),
-                                                     reinterpret_cast<u64>(backing), sz)
-                           : 0;
-        virtmemUnlock();
+        /*
+         * mk9-nx 1.0.5: 0xCE01 (2001-0103, out of the kernel's memory blocks) at start, with next to nothing mapped, ended
+         * a game started seconds after the last one closed (2026-11-06, once): the blocks are the whole console's, and a
+         * process being torn down may still hold them. So a moment later, up to 5 s, before this counts as a failure.
+         */
+        constexpr Result kOutOfBlocks = 0xCE01;
+        void* shadow = nullptr;
+        Result rc = 0;
+        for (int attempt = 0;; ++attempt) {
+            virtmemLock();
+            shadow = virtmemFindCodeMemory(sz, align);
+            rc = shadow ? svcMapProcessCodeMemory(Proc(), reinterpret_cast<u64>(shadow),
+                                                  reinterpret_cast<u64>(backing), sz)
+                        : 0;
+            virtmemUnlock();
+            if (!shadow || rc != kOutOfBlocks || attempt >= 50) break;
+            g_block_retries.fetch_add(1, std::memory_order_relaxed);
+            svcSleepThread(100000000);
+        }
 
         if (!shadow) {
             free(backing);
@@ -684,7 +700,12 @@ bool RexGmCommit(size_t offset, size_t length, RexGmAccess access) {
         }
 
         /* The code alias starts without write access; it has to be opened. */
-        rc = svcSetProcessMemoryPermission(Proc(), reinterpret_cast<u64>(shadow), sz, Perm_Rw);
+        for (int attempt = 0;; ++attempt) {
+            rc = svcSetProcessMemoryPermission(Proc(), reinterpret_cast<u64>(shadow), sz, Perm_Rw);
+            if (rc != kOutOfBlocks || attempt >= 50) break;
+            g_block_retries.fetch_add(1, std::memory_order_relaxed);
+            svcSleepThread(100000000);
+        }
         if (R_FAILED(rc)) {
             svcUnmapProcessCodeMemory(Proc(), reinterpret_cast<u64>(shadow),
                                       reinterpret_cast<u64>(backing), sz);

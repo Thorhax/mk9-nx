@@ -722,3 +722,35 @@ arena 42.3 fps against 1.0.1's 42.3 (two runs each).
   showed on the way: std::thread::detach throws here (the game ended at start); threadCreate refuses priority 0x3E
   (0xE001: created at 0x2C, lowered to 0x3B once running); envSetNextLoad cannot be used at this point (the loader
   unloads the NRO while the game's threads run: an instruction abort outside any module).
+
+## 1.0.5: the green "You are not signed in" box, and settings that were lost (2026-11-07)
+
+Testers saw the game's green box on leaving Options after any change (subtitles, contrast), and nothing they changed
+outlived the session. It is not a controller or setup problem: with one controller, player 1, through a forwarder or
+hbmenu, Options > Gameplay > Subtitles > Accept > Yes shows it every session.
+
+- **The cause.** The game reads only its settings (MK9GSET) at Press Start. The player's profile (MK9PSET, the block at
+  0x833D1C48, 4452 bytes a player, its first word the size in the save) is asked for only on entering a mode that needs
+  it (Practice, Story, the Krypt). Until then the word is 0, and sub_824C0DF0, the save of a change, calls sub_824C0730,
+  gets 0 and shows "You are not signed in" (sub_829D62E8, sub_82AA4720). So does the Fatality Tutorial's Retry. "Continue
+  without saving" turns saving off for the session (the manager at 0x834261C8: +3152 = 0, +3156 = 1). "Sign in" calls
+  XamShowSigninUI and the game goes back to Press Start. The signed-in state itself was never the problem: reporting
+  all four users as signed in changed nothing (2026-11-06).
+- **The fix** (`app/src/mk9_profile_load.cpp`, cvar `mk9_load_profile_at_start`, default on). sub_824A7978, the script's
+  "this player pressed Start", marks the slot able to save and picks the device. Right after its first such call for
+  user 0, the hook asks for the profile as those modes do: sub_824C0420 (r3 = 0, r4 = user), which queues the read and
+  its callback sub_82522138. No new code generation: the native is reached through its table, so `sub_824A7978` is
+  replaced at link time as in mk9_movie.cpp.
+- **Console** (through a sphaira forwarder, 1.0.4-kratos data). With a tester's save (MK9PSET, no MK9GSET): no box;
+  Subtitles, Contrast and a rebound button all survive a restart; the Fatality Tutorial's Retry shows no box. 100,000
+  Koins saved before a restart are in the Krypt after it. A card with no save: no box; an Arcade ladder then earned 291
+  Koins, there on the next boots. Story, Challenge Tower, the Krypt and Practice all still open. MK9PSET's first 0x1970
+  bytes after a save with the fix equal the backup's; the rest changes when the game itself rewrites it, as it does on
+  entering the Krypt without the fix too.
+- **Careful with `log_level = "debug"` here.** The XMA "unknown register" lines flood the log and it drops others, [save]
+  included: that run seemed to show a save written without being read. At the normal level the read comes first.
+- **A relaunch that crashed once** (2026-11-06, about 8 s after closing a session of several minutes): 0xCE01, out of the
+  kernel's memory blocks, with only 386 MB of backing, a commit at start. Not reproduced in 22 fast relaunches (14 from
+  the menus, 8 after a loaded fight). The blocks are the whole console's, so a process still being torn down is a
+  guess. `RexGmCommit` now waits up to 5 s for them before failing; it logs "waited for the kernel's memory blocks" if it
+  ever does. That path was fatal before, so nothing else changes. Unproven.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ftp.py put local remote | get remote local | getdir remote local | ls remote | rm remote"""
+"""ftp.py put local remote | get remote local | getdir remote local | ls remote | rm remote | mkdir remote (with parents)"""
 import ftplib, sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rigenv import E
@@ -21,4 +21,11 @@ elif op == "get":
 elif op == "getdir": getdir(a[0], a[1])
 elif op == "ls": f.retrlines("LIST " + a[0])
 elif op == "rm": f.delete(a[0])
+elif op == "rmdir": f.rmd(a[0])  # an empty folder only
+elif op == "mkdir":
+    path = ""
+    for part in a[0].strip("/").split("/"):
+        path += "/" + part
+        try: f.mkd(path)
+        except ftplib.error_perm: pass  # already there
 f.quit()

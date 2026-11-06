@@ -209,7 +209,9 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
     uint32_t content_license = 0;
     if (disposition == kDispositionState::Create) {
       result = content_manager->CreateContent(root_name, xuid, content_data);
-      if (XSUCCEEDED(result)) {
+      // mk9-nx (2026-10-29): == X_ERROR_SUCCESS (CreateContent returns Win32 errors, which pass XSUCCEEDED): a create
+      // that failed (ALREADY_EXISTS, ACCESS_DENIED) wrote the header anyway, over another package's or for none.
+      if (result == X_ERROR_SUCCESS) {
         content_manager->WriteContentHeaderFile(xuid, content_data);
       }
     } else if (disposition == kDispositionState::Open) {

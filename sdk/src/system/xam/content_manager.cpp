@@ -321,8 +321,11 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device
     }
 
     XCONTENT_AGGREGATE_DATA content_data;
-    if (XSUCCEEDED(ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id,
-                                         content_type, content_data))) {
+    // mk9-nx (2026-10-28): == X_ERROR_SUCCESS, not XSUCCEEDED: its Win32 errors (X_ERROR_FILE_NOT_FOUND is 2) pass
+    // XSUCCEEDED, so a package without a header file (DLC put in place by hand: the Kratos mod's KRATOS folder) was
+    // listed from an uninitialised record (no name, type 5A000000) and the game could not open it.
+    if (ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id, content_type,
+                              content_data) == X_ERROR_SUCCESS) {
       result.emplace_back(std::move(content_data));
     } else {
       content_data.device_id = device_id;

@@ -754,3 +754,7 @@ hbmenu, Options > Gameplay > Subtitles > Accept > Yes shows it every session.
   the menus, 8 after a loaded fight). The blocks are the whole console's, so a process still being torn down is a
   guess. `RexGmCommit` now waits up to 5 s for them before failing; it logs "waited for the kernel's memory blocks" if it
   ever does. That path was fatal before, so nothing else changes. Unproven.
+- **A package folder without a header on the base build.** An empty `KRATOS` folder left under `mk9/0000000000000000/`
+  ended the game at Press Start ("FATAL ... Illegal byte sequence", the listing from an uninitialised record). The Kratos
+  branch's two fixes (2026-10-28 and 29: a missing header is not success; no header written after a failed create) are
+  now on master too, so going back from Kratos to the base build cannot do this.
